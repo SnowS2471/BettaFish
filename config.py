@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     # ================== Flask 服务器配置 ====================
     HOST: str = Field("0.0.0.0", description="BETTAFISH 主机地址，例如 0.0.0.0 或 127.0.0.1")
     PORT: int = Field(5000, description="Flask服务器端口号，默认5000")
+    FLASK_SECRET_KEY: str = Field(
+        "Dedicated-to-creating-a-concise-and-versatile-public-opinion-analysis-platform",
+        description="Flask会话签名密钥，生产环境请务必通过环境变量覆盖为随机强密钥"
+    )
 
     # ====================== 数据库配置 ======================
     DB_DIALECT: str = Field("postgresql", description="数据库类型，可选 mysql 或 postgresql；请与其他连接信息同时配置")

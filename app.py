@@ -23,6 +23,7 @@ import requests
 from loguru import logger
 import importlib
 from pathlib import Path
+from config import settings as _startup_settings
 from MindSpider.main import MindSpider
 from utils.knowledge_logger import (
     append_knowledge_log,
@@ -39,7 +40,7 @@ except ImportError as e:
     REPORT_ENGINE_AVAILABLE = False
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'Dedicated-to-creating-a-concise-and-versatile-public-opinion-analysis-platform'
+app.config['SECRET_KEY'] = _startup_settings.FLASK_SECRET_KEY
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 # eventlet 在客户端主动断开时偶尔会抛出 ConnectionAbortedError，这里做一次防御性包裹，
@@ -491,11 +492,10 @@ def monitor_forum_log():
 
                         last_position = f.tell()
 
-                        # 清理processed_lines集合，避免内存泄漏（保留最近1000行的哈希）
+                        # 清理processed_lines集合，避免内存泄漏（set无序，直接清空即可；
+                        # last_position已记录文件偏移，不会重复处理正常的新行）
                         if len(processed_lines) > 1000:
-                            # 保留最近500行的哈希
-                            recent_hashes = list(processed_lines)[-500:]
-                            processed_lines = set(recent_hashes)
+                            processed_lines.clear()
 
             time.sleep(1)  # 每秒检查一次
         except Exception as e:
@@ -1116,6 +1116,11 @@ def get_forum_log_history():
         data = request.get_json()
         start_position = data.get('position', 0)  # 客户端上次接收的位置
         max_lines = data.get('max_lines', 1000)   # 最多返回的行数
+        try:
+            start_position = max(0, int(start_position))
+            max_lines = min(max(1, int(max_lines)), 5000)  # 限制在1到5000之间
+        except (TypeError, ValueError):
+            return jsonify({'success': False, 'message': '参数类型错误'}), 400
 
         forum_log_file = LOG_DIR / "forum.log"
         if not forum_log_file.exists():
@@ -1168,6 +1173,9 @@ def search():
     
     if not query:
         return jsonify({'success': False, 'message': '搜索查询不能为空'})
+    
+    if len(query) > 500:
+        return jsonify({'success': False, 'message': '搜索查询过长，请控制在500字以内'})
     
     # ForumEngine论坛已经在后台运行，会自动检测搜索活动
     # logger.info("ForumEngine: 搜索请求已收到，论坛将自动检测日志变化")
