@@ -143,9 +143,132 @@ ADD COLUMN `topic_id` varchar(64) DEFAULT NULL COMMENT '关联的话题ID',
 ADD COLUMN `crawling_task_id` varchar(64) DEFAULT NULL COMMENT '关联的爬取任务ID';
 
 -- 为知乎内容表添加话题关联字段
-ALTER TABLE `zhihu_content` 
+ALTER TABLE `zhihu_content`
 ADD COLUMN `topic_id` varchar(64) DEFAULT NULL COMMENT '关联的话题ID',
 ADD COLUMN `crawling_task_id` varchar(64) DEFAULT NULL COMMENT '关联的爬取任务ID';
+
+-- ===============================
+-- X (Twitter) 平台表结构
+-- ===============================
+
+-- ----------------------------
+-- Table structure for twitter_tweet
+-- 推文主表
+-- ----------------------------
+DROP TABLE IF EXISTS `twitter_tweet`;
+CREATE TABLE `twitter_tweet` (
+    `id` int NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `user_id` varchar(255) DEFAULT NULL COMMENT '用户ID',
+    `username` varchar(255) DEFAULT NULL COMMENT '用户名(@handle)',
+    `nickname` text COMMENT '显示名称',
+    `avatar` text COMMENT '头像URL',
+    `user_verified` tinyint DEFAULT 0 COMMENT '是否认证用户',
+    `user_verified_type` varchar(32) DEFAULT '' COMMENT '认证类型(blue/business/government)',
+    `ip_location` text COMMENT 'IP属地',
+    `add_ts` bigint NOT NULL COMMENT '添加时间戳',
+    `last_modify_ts` bigint NOT NULL COMMENT '最后修改时间戳',
+    `tweet_id` varchar(255) NOT NULL COMMENT '推文ID',
+    `tweet_type` varchar(32) DEFAULT 'tweet' COMMENT '推文类型(tweet/retweet/quote/reply)',
+    `content` text COMMENT '推文文本内容',
+    `create_time` bigint DEFAULT NULL COMMENT '发布时间戳',
+    `create_date_time` varchar(255) DEFAULT NULL COMMENT '发布时间(格式化)',
+    `like_count` varchar(64) DEFAULT '0' COMMENT '点赞数',
+    `retweet_count` varchar(64) DEFAULT '0' COMMENT '转发数',
+    `reply_count` varchar(64) DEFAULT '0' COMMENT '回复数',
+    `quote_count` varchar(64) DEFAULT '0' COMMENT '引用数',
+    `bookmark_count` varchar(64) DEFAULT '0' COMMENT '书签数',
+    `view_count` varchar(64) DEFAULT '0' COMMENT '浏览数',
+    `media_urls` text COMMENT '媒体URL列表(JSON)',
+    `media_types` text COMMENT '媒体类型列表(JSON)',
+    `video_url` text COMMENT '视频播放URL',
+    `hashtags` text COMMENT '话题标签列表(JSON)',
+    `mentioned_users` text COMMENT '提及用户列表(JSON)',
+    `urls` text COMMENT '链接列表(JSON)',
+    `is_retweet` tinyint DEFAULT 0 COMMENT '是否为转发',
+    `retweeted_tweet_id` varchar(255) DEFAULT '' COMMENT '原推文ID',
+    `retweeted_user_id` varchar(255) DEFAULT '' COMMENT '原作者ID',
+    `is_quote` tinyint DEFAULT 0 COMMENT '是否为引用',
+    `quoted_tweet_id` varchar(255) DEFAULT '' COMMENT '被引用推文ID',
+    `quoted_user_id` varchar(255) DEFAULT '' COMMENT '被引用作者ID',
+    `is_reply` tinyint DEFAULT 0 COMMENT '是否为回复',
+    `reply_to_tweet_id` varchar(255) DEFAULT '' COMMENT '回复的推文ID',
+    `reply_to_user_id` varchar(255) DEFAULT '' COMMENT '回复的用户ID',
+    `tweet_url` text COMMENT '推文链接',
+    `source_keyword` text COMMENT '搜索关键词',
+    `lang` varchar(16) DEFAULT '' COMMENT '语言代码',
+    `topic_id` varchar(64) DEFAULT NULL COMMENT '关联的话题ID',
+    `crawling_task_id` varchar(64) DEFAULT NULL COMMENT '关联的爬取任务ID',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `idx_tweet_id` (`tweet_id`),
+    KEY `idx_user_id` (`user_id`),
+    KEY `idx_create_time` (`create_time`),
+    KEY `idx_topic_id` (`topic_id`),
+    KEY `idx_crawling_task_id` (`crawling_task_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Twitter推文表';
+
+-- ----------------------------
+-- Table structure for twitter_tweet_comment
+-- 推文评论表
+-- ----------------------------
+DROP TABLE IF EXISTS `twitter_tweet_comment`;
+CREATE TABLE `twitter_tweet_comment` (
+    `id` int NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `user_id` varchar(255) DEFAULT NULL COMMENT '评论用户ID',
+    `username` varchar(255) DEFAULT NULL COMMENT '用户名',
+    `nickname` text COMMENT '显示名称',
+    `avatar` text COMMENT '头像URL',
+    `user_verified` tinyint DEFAULT 0 COMMENT '是否认证用户',
+    `ip_location` text COMMENT 'IP属地',
+    `add_ts` bigint NOT NULL COMMENT '添加时间戳',
+    `last_modify_ts` bigint NOT NULL COMMENT '最后修改时间戳',
+    `comment_id` varchar(255) NOT NULL COMMENT '评论ID',
+    `tweet_id` varchar(255) NOT NULL COMMENT '所属推文ID',
+    `content` text COMMENT '评论内容',
+    `create_time` bigint DEFAULT NULL COMMENT '评论时间戳',
+    `create_date_time` varchar(255) DEFAULT NULL COMMENT '评论时间(格式化)',
+    `like_count` varchar(64) DEFAULT '0' COMMENT '点赞数',
+    `reply_count` varchar(64) DEFAULT '0' COMMENT '回复数',
+    `retweet_count` varchar(64) DEFAULT '0' COMMENT '转发数',
+    `parent_comment_id` varchar(255) DEFAULT '' COMMENT '父评论ID',
+    `media_urls` text COMMENT '媒体URL列表(JSON)',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `idx_comment_id` (`comment_id`),
+    KEY `idx_tweet_id` (`tweet_id`),
+    KEY `idx_user_id` (`user_id`),
+    KEY `idx_create_time` (`create_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Twitter推文评论表';
+
+-- ----------------------------
+-- Table structure for twitter_creator
+-- 创作者表
+-- ----------------------------
+DROP TABLE IF EXISTS `twitter_creator`;
+CREATE TABLE `twitter_creator` (
+    `id` int NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `user_id` varchar(255) NOT NULL COMMENT '用户ID',
+    `username` varchar(255) DEFAULT NULL COMMENT '用户名(@handle)',
+    `nickname` text COMMENT '显示名称',
+    `avatar` text COMMENT '头像URL',
+    `banner_url` text COMMENT '横幅图片URL',
+    `ip_location` text COMMENT 'IP属地',
+    `add_ts` bigint NOT NULL COMMENT '添加时间戳',
+    `last_modify_ts` bigint NOT NULL COMMENT '最后修改时间戳',
+    `bio` text COMMENT '个人简介',
+    `location` varchar(255) DEFAULT '' COMMENT '位置',
+    `website` text COMMENT '网站链接',
+    `join_date` varchar(255) DEFAULT NULL COMMENT '加入日期',
+    `verified` tinyint DEFAULT 0 COMMENT '是否认证',
+    `verified_type` varchar(32) DEFAULT '' COMMENT '认证类型',
+    `protected` tinyint DEFAULT 0 COMMENT '是否受保护账号',
+    `followers_count` varchar(64) DEFAULT '0' COMMENT '粉丝数',
+    `following_count` varchar(64) DEFAULT '0' COMMENT '关注数',
+    `tweet_count` varchar(64) DEFAULT '0' COMMENT '推文数',
+    `listed_count` varchar(64) DEFAULT '0' COMMENT '被列表数',
+    `profile_url` text COMMENT '个人主页URL',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `idx_user_id` (`user_id`),
+    KEY `idx_username` (`username`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Twitter创作者表';
 
 -- ===============================
 -- 创建视图用于数据分析
