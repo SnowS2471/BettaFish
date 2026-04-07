@@ -137,7 +137,7 @@ class MindSpider:
         except Exception as e:
             logger.exception(f"检查数据库表失败: {e}")
             return False
-    
+
     def initialize_database(self) -> bool:
         """初始化数据库"""
         logger.info("初始化数据库...")
