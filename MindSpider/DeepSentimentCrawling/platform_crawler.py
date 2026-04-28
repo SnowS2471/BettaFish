@@ -30,7 +30,7 @@ class PlatformCrawler:
     def __init__(self):
         """初始化平台爬虫管理器"""
         self.mediacrawler_path = Path(__file__).parent / "MediaCrawler"
-        self.supported_platforms = ['xhs', 'dy', 'ks', 'bili', 'wb', 'tieba', 'zhihu', 'x']
+        self.supported_platforms = ['xhs', 'dy', 'ks', 'bili', 'wb', 'tieba', 'zhihu', 'x', 'news_za']
         self.crawl_stats = {}
         
         # 确保MediaCrawler子模块已初始化

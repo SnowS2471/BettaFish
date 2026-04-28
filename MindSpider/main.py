@@ -439,7 +439,7 @@ class MindSpider:
         logger.info("MindSpider项目初始化完成！")
         return True
 
-PLATFORM_CHOICES = ['xhs', 'dy', 'ks', 'bili', 'wb', 'tieba', 'zhihu', 'x']
+PLATFORM_CHOICES = ['xhs', 'dy', 'ks', 'bili', 'wb', 'tieba', 'zhihu', 'x', 'news_za']
 
 PLATFORM_ALIASES = {
     'weibo': 'wb', 'webo': 'wb', '微博': 'wb',

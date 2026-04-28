@@ -558,3 +558,24 @@ class TwitterCreator(Base):
     tweet_count: Mapped[str | None] = mapped_column(String(64), default='0', nullable=True)
     listed_count: Mapped[str | None] = mapped_column(String(64), default='0', nullable=True)
     profile_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class SANewsArticle(Base):
+    __tablename__ = "sa_news_article"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    article_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True, unique=True)
+    source_site: Mapped[str | None] = mapped_column(String(32), index=True, nullable=True)
+    title: Mapped[str | None] = mapped_column(Text, nullable=True)
+    content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    author: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    publish_time: Mapped[str | None] = mapped_column(String(255), index=True, nullable=True)
+    article_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    image_urls: Mapped[str | None] = mapped_column(Text, nullable=True)
+    category: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    tags: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_keyword: Mapped[str | None] = mapped_column(Text, default='', nullable=True)
+    add_ts: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    last_modify_ts: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    topic_id: Mapped[str | None] = mapped_column(String(64), ForeignKey("daily_topics.topic_id", ondelete="SET NULL"), nullable=True)
+    crawling_task_id: Mapped[str | None] = mapped_column(String(64), ForeignKey("crawling_tasks.task_id", ondelete="SET NULL"), nullable=True)
