@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-DeepSentimentCrawling模块 - 主工作流程
-基于BroadTopicExtraction提取的话题进行全平台关键词爬取
+DeepSentimentCrawling模块 - 主工作流程（阶段二编排）
+
+读取阶段一存入数据库的当日关键词，通过 KeywordManager 取词、PlatformCrawler 驱动 MediaCrawler，
+在 9 个平台（xhs/dy/ks/bili/wb/tieba/zhihu/x/news_za）上按关键词搜索抓取内容与评论。
+支持「全平台」或「单平台」两种模式，--test 会把关键词/条数都压到 ≤10 做小规模验证。
 """
 
 import sys

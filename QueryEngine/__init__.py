@@ -1,6 +1,8 @@
 """
-Deep Search Agent
-一个无框架的深度搜索AI代理实现
+Deep Search Agent（QueryEngine 包入口）
+
+一个无框架（hand-rolled）的深度搜索 AI 代理：基于 Tavily 网络搜索做新闻分析报告。
+对外导出 DeepSearchAgent / create_agent 与配置 Settings，供 SingleEngineApp 与编排器使用。
 """
 
 from .agent import DeepSearchAgent, create_agent

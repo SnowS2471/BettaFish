@@ -1,6 +1,8 @@
 """
-Deep Search Agent
-一个无框架的深度搜索AI代理实现
+Deep Search Agent（InsightEngine 包入口）
+
+一个无框架（hand-rolled）的深度搜索 AI 代理：对外导出 DeepSearchAgent / create_agent
+以及配置 Settings / settings，供 SingleEngineApp 与编排器导入使用。
 """
 
 from .agent import DeepSearchAgent, create_agent

@@ -1,6 +1,10 @@
 """
 节点基类
-定义所有处理节点的基础接口
+
+定义两种处理节点的统一接口：
+- BaseNode：run() 范式——纯计算/产出结果，不修改 State（如搜索节点）。
+- StateMutationNode：在 BaseNode 上加 mutate_state()，会把结果写回 State（如总结/结构节点）。
+所有具体节点都继承自这两者之一，并共用同一个 LLM 客户端与日志辅助方法。
 """
 
 from abc import ABC, abstractmethod
@@ -11,7 +15,7 @@ from ..state.state import State
 
 
 class BaseNode(ABC):
-    """节点基类"""
+    """所有节点的抽象基类：约定 run() 接口、持有 LLM 客户端、提供统一日志方法。"""
     
     def __init__(self, llm_client: LLMClient, node_name: str = ""):
         """
@@ -76,7 +80,7 @@ class BaseNode(ABC):
 
 
 class StateMutationNode(BaseNode):
-    """带状态修改功能的节点基类"""
+    """会修改 State 的节点基类：约定 mutate_state()，约定内部先 run() 再把结果写回 State。"""
     
     @abstractmethod
     def mutate_state(self, input_data: Any, state: State, **kwargs) -> State:

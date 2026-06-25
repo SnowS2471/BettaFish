@@ -21,8 +21,10 @@ ENV_FILE: str = str(CWD_ENV if CWD_ENV.exists() else (PROJECT_ROOT / ".env"))
 
 class Settings(BaseSettings):
     """
-    Query Engine 全局配置；支持 .env 和环境变量自动加载。
-    变量名与原 config.py 大写一致，便于平滑过渡。
+    Query Engine 全局配置（独立于项目根 config.py 的 Settings）；支持 .env 和环境变量自动加载。
+
+    其中 QUERY_ENGINE_API_KEY / QUERY_ENGINE_MODEL_NAME / TAVILY_API_KEY 为必填（Field(...)），
+    缺失会在实例化时报错。extra="allow" 容忍未声明的键，便于共用同一份 .env。
     """
     
     # ======================= LLM 相关 =======================
@@ -52,7 +54,7 @@ class Settings(BaseSettings):
         extra = "allow"
 
 
-# 创建全局配置实例
+# 模块级单例：导入时即从 .env / 环境变量加载（必填项缺失会在此报错）
 settings = Settings()
 
 def print_config(config: Settings):

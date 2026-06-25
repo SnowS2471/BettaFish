@@ -1,6 +1,8 @@
 """
-Configuration management module for the Insight Engine.
-Handles environment variables and config file parameters.
+Insight Engine 的配置模块。
+
+定义 InsightEngine 自己的 Settings（独立于项目根 config.py 的全局 Settings），用
+pydantic-settings 从 .env / 环境变量加载 LLM、数据库、各搜索工具默认上限与输出等参数。
 """
 
 import os
@@ -11,6 +13,11 @@ from pydantic import Field
 from loguru import logger
 
 class Settings(BaseSettings):
+    """InsightEngine 配置模型：LLM / 数据库 / 各搜索工具默认上限 / 输出目录等。
+
+    与项目根 config.py 的 Settings 并存；extra="allow" 容忍未声明的键，便于共用同一份 .env。
+    Streamlit 会用其中部分字段构造临时实例传给 DeepSearchAgent。
+    """
     INSIGHT_ENGINE_API_KEY: Optional[str] = Field(None, description="Insight Engine LLM API密钥")
     INSIGHT_ENGINE_BASE_URL: Optional[str] = Field(None, description="Insight Engine LLM base url，可选")
     INSIGHT_ENGINE_MODEL_NAME: Optional[str] = Field(None, description="Insight Engine LLM模型名称")
@@ -42,4 +49,5 @@ class Settings(BaseSettings):
         case_sensitive = False
         extra = "allow"
 
+# 模块级单例：导入时即从 .env / 环境变量加载一次
 settings = Settings()

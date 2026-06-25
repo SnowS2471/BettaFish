@@ -1,6 +1,12 @@
 """
 文本处理工具函数
-用于清理LLM输出、解析JSON等
+
+主要解决 LLM 输出「不规整」的问题，供各节点解析使用：
+- JSON 清洗/修复：去 ```json 代码围栏、剥离推理前言、补全被截断的 JSON
+  （remove_reasoning_from_output / clean_json_tags / extract_clean_response /
+   fix_incomplete_json / fix_aggressive_json）；
+- 结果格式化：format_search_results_for_prompt / truncate_content。
+（QueryEngine 版不含 InsightEngine 的跨语言/跨平台辅助函数。）
 """
 
 import re

@@ -1,6 +1,8 @@
 """
-Prompt模块
-定义Deep Search Agent各个阶段使用的系统提示词
+Prompt 模块
+
+集中导出各阶段的系统提示词（SYSTEM_PROMPT_*）与对应的输入/输出 JSON Schema，
+供结构 / 搜索 / 总结 / 反思 / 格式化等节点直接引用（定义见 prompts.py）。
 """
 
 from .prompts import (

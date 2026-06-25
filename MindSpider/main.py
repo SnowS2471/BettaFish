@@ -1,8 +1,22 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-MindSpider - AI爬虫项目主程序
-集成BroadTopicExtraction和DeepSentimentCrawling两个核心模块
+MindSpider - AI爬虫项目主程序（数据采集子系统，git submodule）
+
+职责概述
+--------
+MindSpider 是整个 BettaFish 的「数据源」：它爬取 30+ 社媒平台并写入数据库，供 InsightEngine
+后续做 SQL 挖掘。本文件是顶层 CLI 编排器，串起两大阶段（均以 subprocess 调子模块 main.py 执行）：
+
+    阶段一 BroadTopicExtraction  —— 抓当日热点新闻 → LLM 提取关键词 → 存 daily_topics
+    阶段二 DeepSentimentCrawling —— 用上述关键词驱动 MediaCrawler 在各平台搜索抓取内容/评论
+
+设计要点
+--------
+- 两阶段通过「数据库里的当日关键词」解耦，而非直接函数调用；本类用 subprocess 分别拉起子模块。
+- 运行前自动体检：配置/数据库连接/建表/依赖（含自动 pip 安装 MediaCrawler 依赖）。
+- MediaCrawler 是再下一层的 git 子模块，缺失时提示 `git submodule update --init --recursive`。
+- 支持 MySQL / PostgreSQL（按 DB_DIALECT 选异步驱动 asyncmy / asyncpg）。
 """
 
 import os
@@ -261,7 +275,11 @@ class MindSpider:
             return False
 
     def run_broad_topic_extraction(self, extract_date: date = None, keywords_count: int = 100) -> bool:
-        """运行BroadTopicExtraction模块"""
+        """运行 BroadTopicExtraction（阶段一）。
+
+        用 subprocess 在子目录里拉起 `BroadTopicExtraction/main.py`（而非 import 调用），
+        以隔离各子模块的依赖与工作目录；30 分钟超时。
+        """
         logger.info("运行BroadTopicExtraction模块...")
         
         # 自动检查并初始化数据库表
@@ -357,7 +375,7 @@ class MindSpider:
     def run_complete_workflow(self, target_date: date = None, platforms: list = None,
                              keywords_count: int = 100, max_keywords: int = 50,
                              max_notes: int = 50, test_mode: bool = False) -> bool:
-        """运行完整工作流程"""
+        """运行完整工作流程：先话题提取、后情感爬取（任一阶段失败即终止）。"""
         logger.info("开始完整的MindSpider工作流程")
         
         # 自动检查并初始化数据库表（确保独立调用时也能自动初始化）

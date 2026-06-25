@@ -270,6 +270,57 @@ CREATE TABLE `twitter_creator` (
     KEY `idx_username` (`username`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Twitter创作者表';
 
+-- ----------------------------
+-- Table structure for sa_news_article (南非新闻文章)
+-- ----------------------------
+DROP TABLE IF EXISTS `sa_news_article`;
+CREATE TABLE `sa_news_article` (
+    `id` int NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `article_id` varchar(64) NOT NULL COMMENT '文章唯一ID',
+    `source_site` varchar(32) DEFAULT NULL COMMENT '新闻来源站点',
+    `title` text COMMENT '英文原标题',
+    `content` text COMMENT '英文原文内容',
+    `summary` text COMMENT '英文章节摘要',
+    `author` varchar(255) DEFAULT NULL COMMENT '作者',
+    `publish_time` varchar(255) DEFAULT NULL COMMENT '发布时间',
+    `article_url` text COMMENT '文章URL',
+    `image_urls` text COMMENT '图片URL列表(JSON)',
+    `category` varchar(255) DEFAULT NULL COMMENT '分类',
+    `tags` text COMMENT '标签',
+    `source_keyword` text COMMENT '搜索来源关键词',
+    `add_ts` bigint DEFAULT NULL COMMENT '添加时间戳',
+    `last_modify_ts` bigint DEFAULT NULL COMMENT '最后修改时间戳',
+    `topic_id` varchar(64) DEFAULT NULL COMMENT '关联话题ID',
+    `crawling_task_id` varchar(64) DEFAULT NULL COMMENT '关联采集任务ID',
+    -- 翻译字段
+    `title_zh` text COMMENT '中文译题',
+    `content_zh` text COMMENT '中文译文内容',
+    `summary_zh` text COMMENT '中文摘要',
+    `translation_status` varchar(16) DEFAULT 'pending' COMMENT '翻译状态: pending/translating/done/failed',
+    `translation_provider` varchar(64) DEFAULT NULL COMMENT '翻译服务商',
+    `translation_ts` bigint DEFAULT NULL COMMENT '翻译时间戳',
+    `translation_input_tokens` int DEFAULT 0 COMMENT '翻译输入Token数',
+    `translation_output_tokens` int DEFAULT 0 COMMENT '翻译输出Token数',
+    `translation_cost` varchar(32) DEFAULT NULL COMMENT '翻译成本',
+    `translation_duration_ms` bigint DEFAULT NULL COMMENT '翻译耗时(ms)',
+    -- 翻译质量评估字段
+    `eval_accuracy` int DEFAULT NULL COMMENT '准确性评分(1-10)',
+    `eval_fluency` int DEFAULT NULL COMMENT '流畅性评分(1-10)',
+    `eval_terminology` int DEFAULT NULL COMMENT '术语一致性评分(1-10)',
+    `eval_completeness` int DEFAULT NULL COMMENT '完整性评分(1-10)',
+    `eval_overall` int DEFAULT NULL COMMENT '综合评分(1-10)',
+    `eval_comment` text COMMENT '评价备注',
+    `eval_provider` varchar(64) DEFAULT NULL COMMENT '评估模型',
+    `eval_ts` bigint DEFAULT NULL COMMENT '评估时间戳',
+    `quality_flag` varchar(16) DEFAULT NULL COMMENT '质量标记: good/low_quality',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `idx_article_id` (`article_id`),
+    KEY `idx_source_site` (`source_site`),
+    KEY `idx_publish_time` (`publish_time`),
+    KEY `idx_translation_status` (`translation_status`),
+    KEY `idx_source_keyword` (`source_keyword`(100))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='南非新闻文章表';
+
 -- ===============================
 -- 创建视图用于数据分析
 -- ===============================

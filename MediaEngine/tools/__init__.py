@@ -1,6 +1,8 @@
 """
-工具调用模块
-提供外部工具接口，如多模态搜索等
+工具调用模块（MediaEngine 工具层出口）
+
+导出两套网络搜索后端 BochaMultimodalSearch / AnspireAISearch，及其结果数据类
+（WebpageResult / ImageResult / ModalCardResult / BochaResponse / AnspireResponse）。
 """
 
 from .search import (

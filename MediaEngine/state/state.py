@@ -1,6 +1,9 @@
 """
-Deep Search Agent状态管理
-定义所有状态数据结构和操作方法
+Deep Search Agent 状态管理
+
+定义贯穿研究流程的状态结构（四层：State → Paragraph → Research → Search）。
+相比 Query/Insight，MediaEngine 的 Search 多了 paragraph_title/search_tool/has_result 三个字段，
+且 add_search_results 在「无结果」时也会记一条占位搜索——用于 Streamlit 展示完整搜索轨迹。
 """
 
 from dataclasses import dataclass, field
@@ -11,7 +14,7 @@ from datetime import datetime
 
 @dataclass
 class Search:
-    """单个搜索结果的状态"""
+    """单个搜索结果的状态（比 Query/Insight 多 paragraph_title/search_tool/has_result 三个展示字段）"""
     query: str = ""                    # 搜索查询
     url: str = ""                      # 搜索结果的链接
     title: str = ""                    # 搜索结果标题
@@ -65,7 +68,11 @@ class Research:
         self.search_history.append(search)
     
     def add_search_results(self, query: str, results: List[Dict[str, Any]], search_tool: str = "", paragraph_title: str = ""):
-        """批量添加搜索结果"""
+        """批量添加搜索结果。
+
+        相比 Query/Insight 多了 search_tool/paragraph_title 两个参数；且当 results 为空时也会记一条
+        has_result=False 的占位搜索，方便前端展示完整搜索轨迹（哪个段落、用了哪个工具、有没有结果）。
+        """
         if not results:
             # 记录一次“无结果”搜索，方便前端显示搜索轨迹
             self.add_search(

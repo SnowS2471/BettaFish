@@ -1,6 +1,11 @@
 """
 搜索节点实现
-负责生成搜索查询和反思查询
+
+两个「只产出检索词、不改 State」的节点：FirstSearchNode（首次）与 ReflectionNode（反思），
+都对 LLM 输出做多级 JSON 容错后解析。
+
+重要：两者的 process_output 最终只回传 {search_query, reasoning}，会丢弃 LLM 可能给出的
+search_tool，导致 agent 侧实际只使用默认的 comprehensive_search。
 """
 
 import json
@@ -19,7 +24,7 @@ from ..utils.text_processing import (
 
 
 class FirstSearchNode(BaseNode):
-    """为段落生成首次搜索查询的节点"""
+    """为段落生成首次检索词的节点：输入段落标题/内容，让 LLM 产出 search_query(+reasoning)。"""
     
     def __init__(self, llm_client):
         """
@@ -127,7 +132,9 @@ class FirstSearchNode(BaseNode):
             if not search_query:
                 logger.warning("未找到搜索查询，使用默认查询")
                 return self._get_default_search_query()
-            
+
+            # 注意：此处只回传 search_query 与 reasoning，刻意丢弃 LLM 可能给出的 search_tool，
+            # 故 agent 最终总会回退默认的 comprehensive_search。
             return {
                 "search_query": search_query,
                 "reasoning": reasoning
@@ -152,7 +159,7 @@ class FirstSearchNode(BaseNode):
 
 
 class ReflectionNode(BaseNode):
-    """反思段落并生成新搜索查询的节点"""
+    """反思节点：基于段落当前内容找信息缺口，产出补充检索词(+reasoning)。"""
     
     def __init__(self, llm_client):
         """
@@ -262,7 +269,8 @@ class ReflectionNode(BaseNode):
             if not search_query:
                 logger.warning("未找到搜索查询，使用默认查询")
                 return self._get_default_reflection_query()
-            
+
+            # 同 FirstSearchNode：只回传 search_query 与 reasoning，丢弃 search_tool。
             return {
                 "search_query": search_query,
                 "reasoning": reasoning

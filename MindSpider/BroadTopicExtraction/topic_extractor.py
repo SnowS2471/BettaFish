@@ -2,7 +2,12 @@
 # -*- coding: utf-8 -*-
 """
 BroadTopicExtraction模块 - 话题提取器
-基于DeepSeek直接提取关键词和生成新闻总结
+
+阶段一的核心：把当日热点新闻列表交给 LLM（默认 DeepSeek，配置键 MINDSPIDER_*），一次性产出
+「适合社媒搜索的关键词列表 + 新闻分析总结」（要求返回 JSON）。这些关键词随后驱动阶段二的爬取。
+
+健壮性：解析按「```json 代码块 → 直接 JSON → 手动逐行解析」三级降级；API 整体失败时再退化为
+基于标题分词的简易关键词(_extract_simple_keywords)。
 """
 
 import sys
@@ -170,7 +175,11 @@ class TopicExtractor:
             return [], "分析结果处理失败，请稍后重试。"
     
     def _manual_parse_result(self, text: str) -> Tuple[List[str], str]:
-        """手动解析结果（当JSON解析失败时的后备方案）"""
+        """手动解析结果（当JSON解析失败时的后备方案）。
+
+        注意：本方法末尾的 `clean_keywords[:max_keywords]` 引用了未在此作用域定义的 max_keywords，
+        若真的走到这条最深的兜底分支会抛 NameError——属已知隐患（正常路径走 JSON 解析不会触发）。
+        """
         print("尝试手动解析结果...")
         
         keywords = []

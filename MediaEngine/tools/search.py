@@ -27,6 +27,8 @@ import datetime
 from typing import List, Dict, Any, Optional, Literal
 
 from loguru import logger
+# 注意：这里导入的是项目根目录的全局 config（非 MediaEngine/utils/config），
+# 用于取 BOCHA_BASE_URL / ANSPIRE_BASE_URL 等基础地址与默认密钥。
 from config import settings
 
 # 运行前请确保已安装 requests 库: pip install requests
@@ -49,16 +51,16 @@ from dataclasses import dataclass, field
 
 @dataclass
 class WebpageResult:
-    """网页搜索结果"""
-    name: str
-    url: str
-    snippet: str
-    display_url: Optional[str] = None
-    date_last_crawled: Optional[str] = None
+    """网页搜索结果（Bocha 与 Anspire 共用）"""
+    name: str                                   # 标题
+    url: str                                    # 链接
+    snippet: str                                # 摘要
+    display_url: Optional[str] = None           # 展示用链接
+    date_last_crawled: Optional[str] = None     # 爬取/发布时间
 
 @dataclass
 class ImageResult:
-    """图片搜索结果"""
+    """图片搜索结果（Bocha 多模态返回；注意：当前 agent 未消费图片）"""
     name: str
     content_url: str
     host_page_url: Optional[str] = None
@@ -71,13 +73,18 @@ class ModalCardResult:
     """
     模态卡结构化数据结果
     这是 Bocha 搜索的核心特色，用于返回特定类型的结构化信息。
+    （注意：当前 agent 也未消费模态卡。）
     """
     card_type: str  # 例如: weather_china, stock, baike_pro, medical_common
     content: Dict[str, Any]  # 解析后的JSON内容
 
 @dataclass
 class BochaResponse:
-    """封装 Bocha API 的完整返回结果，以便在工具间传递"""
+    """封装 Bocha API 的完整返回结果，以便在工具间传递。
+
+    Bocha 是多模态结果：网页/图片/AI 总结/追问/模态卡都可能有；但 MediaEngine 的 agent
+    目前只取 webpages（见 agent._initial_search_and_summary）。
+    """
     query: str
     conversation_id: Optional[str] = None
     answer: Optional[str] = None  # AI生成的总结答案
@@ -88,7 +95,7 @@ class BochaResponse:
 
 @dataclass
 class AnspireResponse:
-    """封装 Anspire API 的完整返回结果，以便在工具间传递"""
+    """封装 Anspire API 的完整返回结果（只有网页，无图片/模态卡/AI 总结）"""
     query: str
     conversation_id: Optional[str] = None
     score: Optional[float] = None
@@ -123,13 +130,19 @@ class BochaMultimodalSearch:
         }
 
     def _parse_search_response(self, response_dict: Dict[str, Any], query: str) -> BochaResponse:
-        """从API的原始字典响应中解析出结构化的BochaResponse对象"""
+        """从API的原始字典响应中解析出结构化的BochaResponse对象。
+
+        Bocha 把结果放在一个异构的 messages 流里，按 (type, content_type) 分类：
+        answer/text -> AI 总结；follow_up/text -> 追问；source/webpage -> 网页；
+        source/image -> 图片；source/其它 -> 当作模态卡。
+        """
 
         final_response = BochaResponse(query=query)
         final_response.conversation_id = response_dict.get('conversation_id')
 
         messages = response_dict.get('messages', [])
         for msg in messages:
+            # 只关心助手产生的消息
             role = msg.get('role')
             if role != 'assistant':
                 continue
@@ -182,7 +195,10 @@ class BochaMultimodalSearch:
 
     @with_graceful_retry(SEARCH_API_RETRY_CONFIG, default_return=BochaResponse(query="搜索失败"))
     def _search_internal(self, **kwargs) -> BochaResponse:
-        """内部通用的搜索执行器，所有工具最终都调用此方法"""
+        """内部通用的搜索执行器，所有工具最终都调用此方法（Bocha：POST，非流式）。
+
+        重试用尽仍失败时返回占位 BochaResponse(query="搜索失败")；API 业务码非 200 时返回空响应。
+        """
         query = kwargs.get("query", "Unknown Query")
         payload = {
             "stream": False,  # Agent工具通常使用非流式以获取完整结果
@@ -267,7 +283,9 @@ class BochaMultimodalSearch:
 
 class AnspireAISearch:
     """
-    Anspire AI Search 客户端
+    Anspire AI Search 客户端（备用搜索后端）。
+
+    比 Bocha 简单：只返回网页，3 个工具（综合/24h/本周）；用 GET + query 参数调用。
     """
     ANSPIRE_BASE_URL = settings.ANSPIRE_BASE_URL or "https://plugin.anspire.cn/api/ntsearch/search"
 
@@ -307,7 +325,10 @@ class AnspireAISearch:
     
     @with_graceful_retry(SEARCH_API_RETRY_CONFIG, default_return=AnspireResponse(query="搜索失败"))
     def _search_internal(self, **kwargs) -> AnspireResponse:
-        """内部通用的搜索执行器，所有工具最终都调用此方法"""
+        """内部通用的搜索执行器，所有工具最终都调用此方法（Anspire：GET + query 参数）。
+
+        时间范围通过 FromTime/ToTime 字符串传入（由 24h/本周工具计算），Insite 可限定站点。
+        """
         query = kwargs.get("query", "Unknown Query")
         payload = {
             "query": query,
@@ -370,7 +391,10 @@ class AnspireAISearch:
 
 # --- 3. 测试与使用示例 ---
 def load_agent_from_config():
-    """根据配置文件选择并加载搜索Agent"""
+    """根据配置文件选择并加载搜索Agent（仅本文件 __main__ 测试用）。
+
+    按「哪个 key 存在」选择后端；正式流程的后端选择在 agent.create_agent 里按 SEARCH_TOOL_TYPE 决定。
+    """
     if settings.BOCHA_WEB_SEARCH_API_KEY:
         logger.info("加载 BochaMultimodalSearch Agent")
         return BochaMultimodalSearch()

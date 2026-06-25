@@ -18,6 +18,8 @@ from typing import Optional, Dict, Any, List, Callable, Tuple
 
 from loguru import logger
 
+from openai import APIConnectionError
+
 from .core import (
     ChapterStorage,
     DocumentComposer,
@@ -527,6 +529,7 @@ class ReportAgent:
                 chapter_targets,
                 word_plan,
                 template_overview,
+                data_bundles=self._build_sa_data_bundles(query, template_result),
             )
             # IR/渲染需要的全局元数据，带上设计稿给出的标题/主题/目录/篇幅信息
             manifest_meta = {
@@ -698,6 +701,37 @@ class ReportAgent:
                         attempt += 1
                         continue
                     except Exception as chapter_error:
+                        # 连接错误可重试，通常为服务端间歇性断开
+                        is_connection_error = (
+                            isinstance(chapter_error, APIConnectionError)
+                            or "connection error" in str(chapter_error).lower()
+                            or "server disconnected" in str(chapter_error).lower()
+                            or "remote protocol error" in str(chapter_error).lower()
+                        )
+                        if is_connection_error:
+                            if attempt >= chapter_max_attempts:
+                                raise
+                            delay = min(30 * (2 ** (attempt - 1)), 120)
+                            logger.warning(
+                                "章节 {title} 连接错误（第 {attempt}/{total} 次尝试），{delay}s后重试: {error}",
+                                title=section.title,
+                                attempt=attempt,
+                                total=chapter_max_attempts,
+                                delay=delay,
+                                error=chapter_error,
+                            )
+                            emit('chapter_status', {
+                                'chapterId': section.chapter_id,
+                                'title': section.title,
+                                'status': 'retrying',
+                                'attempt': attempt,
+                                'error': str(chapter_error),
+                                'reason': 'connection_error'
+                            })
+                            import time as _time
+                            _time.sleep(delay)
+                            attempt += 1
+                            continue
                         if not self._should_retry_inappropriate_content_error(chapter_error):
                             raise
                         logger.warning(
@@ -870,6 +904,7 @@ class ReportAgent:
         chapter_directives: Dict[str, Any],
         word_plan: Dict[str, Any],
         template_overview: Dict[str, Any],
+        data_bundles: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
         构造章节生成所需的共享上下文。
@@ -908,13 +943,28 @@ class ReportAgent:
                 "audience": "executive",
                 "language": "zh-CN",
             },
-            "data_bundles": [],
+            "data_bundles": data_bundles or [],
             "max_tokens": min(self.config.MAX_CONTENT_LENGTH, 6000),
             "layout": layout_design or {},
             "template_overview": template_overview or {},
             "chapter_directives": chapter_directives or {},
             "word_plan": word_plan or {},
         }
+
+    def _build_sa_data_bundles(
+        self, query: str, template_result: Dict[str, Any]
+    ) -> Optional[List[Dict[str, Any]]]:
+        """当选中南非专题模板时，构建专题数据包。"""
+        template_name = template_result.get("template_name", "")
+        if "南非" not in template_name:
+            return None
+        try:
+            from InsightEngine.tools.sa_report_data_provider import SAReportDataProvider
+            provider = SAReportDataProvider(topic=query)
+            return provider.build_all_data_bundles()
+        except Exception as e:
+            logger.warning(f"南非专题数据包构建失败，将使用空数据: {e}")
+            return None
 
     def _normalize_reports(self, reports: List[Any]) -> Dict[str, str]:
         """

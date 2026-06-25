@@ -2,7 +2,16 @@
 # -*- coding: utf-8 -*-
 """
 DeepSentimentCrawling模块 - 平台爬虫管理器
-负责配置和调用MediaCrawler进行多平台爬取
+
+不自己实现爬虫，而是把开源项目 MediaCrawler（再下一层 git 子模块）当作执行引擎来「驱动」：
+1. configure_mediacrawler_db：把 MediaCrawler 的 db_config.py **整文件重写**成 MindSpider 的库连接，
+   让两边写进同一个库（按 DB_DIALECT 适配 MySQL / PostgreSQL）；
+2. create_base_config：按行改写 MediaCrawler 的 base_config.py（注入 PLATFORM/KEYWORDS/爬取类型/
+   数量/保存方式等），含「多行赋值续行跳过」处理；
+3. run_crawler：subprocess 调 `MediaCrawler/main.py` 真正执行，按平台维度一次性传入全部关键词。
+
+注意：这种「改配置文件 + 子进程」的集成方式很简单直接，但会就地修改子模块源码（db_config.py /
+base_config.py），属于有状态副作用。
 """
 
 import os
@@ -44,7 +53,11 @@ class PlatformCrawler:
         logger.info(f"初始化平台爬虫管理器，MediaCrawler路径: {self.mediacrawler_path}")
     
     def configure_mediacrawler_db(self):
-        """配置MediaCrawler使用我们的数据库（MySQL或PostgreSQL）"""
+        """把 MediaCrawler 的 db_config.py 整文件重写为 MindSpider 的数据库连接。
+
+        按 DB_DIALECT 决定写入 MySQL 还是 PostgreSQL 段；这样 MediaCrawler 抓到的数据会落到
+        MindSpider 同一个库，InsightEngine 才能直接查询。属于「就地改写子模块源码」的副作用操作。
+        """
         try:
             # 判断数据库类型
             db_dialect = (config.settings.DB_DIALECT or "mysql").lower()
@@ -370,13 +383,16 @@ postgres_db_config = {{
                                             login_type: str = "qrcode", max_notes_per_keyword: int = 50) -> Dict:
         """
         基于关键词的多平台爬取 - 每个关键词在所有平台上都进行爬取
-        
+
+        实现上是「按平台外层循环、一次性把全部关键词传给该平台」（而非关键词×平台逐一调用），
+        以减少 MediaCrawler 的启动/登录开销；统计时再回填到每个关键词的结果里。
+
         Args:
             keywords: 关键词列表
             platforms: 平台列表
             login_type: 登录方式
             max_notes_per_keyword: 每个关键词在每个平台的最大爬取数量
-        
+
         Returns:
             总体爬取统计
         """

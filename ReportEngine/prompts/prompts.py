@@ -217,6 +217,7 @@ SYSTEM_PROMPT_TEMPLATE_SELECTION = f"""
 - 特定政策或行业动态舆情分析报告：当监测到重要政策发布、法规变动或足以影响整个行业的宏观动态时，应选择此模板。核心任务是深度解读、预判趋势及对本机构的潜在影响。
 - 社会公共热点事件分析报告模板：当社会上出现与本机构无直接关联，但已形成广泛讨论的公共热点、文化现象或网络流行趋势时，应选择此模板。核心任务是洞察社会心态，并评估事件与本机构的关联性（风险与机遇）。
 - 突发事件与危机公关舆情报告模板：当监测到与本机构直接相关的、具有潜在危害的突发负面事件时，应选择此模板。核心任务是快速响应、评估风险、控制事态。
+- 南非专题舆情分析报告模板：当分析主题涉及南非新闻、南非社会事件、或需要跨平台（南非新闻+X/Twitter）对比分析时，应选择此模板。核心特色是多源数据整合与跨语言跨平台舆情对比。
 
 请按照以下JSON模式定义格式化输出：
 
@@ -337,6 +338,12 @@ SYSTEM_PROMPT_CHAPTER_JSON = f"""
 19. 所有widget块必须在顶层提供`data`或`dataRef`（可将props中的`data`上移），确保Chart.js能够直接渲染；缺失数据时宁可输出表格或段落，绝不留空。
 20. 任何block都必须声明合法`type`（heading/paragraph/list/...）；若需要普通文本请使用`paragraph`并给出`inlines`，禁止返回`type:null`或未知值。
 21. blockquote内容限制：blockquote块内部的blocks只允许包含paragraph类型的block，严禁在blockquote内嵌套表格（table）、列表（list）、图表（widget）、标题（heading）、代码块（code）、公式（math）、嵌套引用（blockquote）等任何非paragraph块；如果引用内容需要用表格/列表等复杂结构呈现，必须将其移到blockquote外部。
+22. **南非专题模板特殊约束（当templateName包含"南非"时生效）**：
+   - 第4章（舆情焦点与关键议题）必须包含至少一个表格（table）和一个KPI卡（kpiGrid）展示核心议题分布
+   - 第6章（跨平台主题对比）必须包含关键词对比表格，至少列出新闻端和社交端的Top-5关键词
+   - 第7章（跨平台情感对比）必须包含情感分布对比图表（widget，使用chart.js/doughnut或chart.js/bar）
+   - 第8章（传播趋势）必须包含时间趋势折线图（widget，使用chart.js/line）
+   - 所有南非专题章节应优先使用 dataBundles 中提供的结构化数据，避免从零构造
 
 <CHAPTER JSON SCHEMA>
 {CHAPTER_JSON_SCHEMA_TEXT}
@@ -408,6 +415,10 @@ SYSTEM_PROMPT_DOCUMENT_LAYOUT = f"""
    - PEST块适合出现在"行业环境分析"、"宏观背景"、"外部环境研判"等分析宏观因素的章节；
    - 如果报告主题与宏观环境分析无关（如具体事件危机公关报告），则所有章节都不设置 `allowPest: true`；
    - SWOT和PEST不应出现在同一章节，二者分别侧重内部能力与外部环境。
+9. **南非专题模板视觉适配（当templateName包含"南非"时生效）**：
+   - themeTokens 中建议使用南非国旗配色（绿#007A4D、金#FFB81C、红#DE3831、蓝#001489、黑#000000、白#FFFFFF）
+   - layoutNotes 中应建议封面加入"南非专题"标识，并在章节间适当增加南非地图插图的文字描述位
+   - hero.highlights 中应突出"多源数据整合"和"跨语言分析"两大特色
 
 **tocPlan的description字段特别要求：**
 - description字段必须是纯文本描述，用于在目录中展示章节简介
@@ -513,3 +524,50 @@ def build_document_layout_prompt(payload: dict) -> str:
 def build_word_budget_prompt(payload: dict) -> str:
     """将篇幅规划输入转为字符串，便于送入LLM并保持字段精确。"""
     return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+# ===== 南非专题章节上下文生成提示词（毕设扩展 - 模块四） =====
+SYSTEM_PROMPT_SA_CHAPTER_CONTEXT = """
+你是南非舆情专题报告的章节内容总监。你正在为南非专题报告的第{chapter_number}章撰写内容，该章节主题为"{chapter_title}"。
+
+**南非专题报告的整体定位**：
+本报告面向南非新闻与X/Twitter平台的跨语言多源舆情分析，核心特色是：
+- 整合南非主流新闻媒体（News24、IOL、Sowetan、Mail & Guardian、Sunday Times）与X平台社交媒体数据
+- 系统后台利用翻译能力对多语言数据进行关键词提取和语义匹配，提升检索覆盖率和分析准确性
+- 执行新闻媒体与社交媒体的跨平台对比分析（主题、情感、时间趋势、叙事差异）
+
+**数据资源说明**：
+系统已为本章准备了 dataBundles 结构化数据包，你应该直接引用其中的统计数字、关键词和案例，而不是凭空构造数据。dataBundles 中可能包含：
+- news_overview: 新闻数量、来源分布、分类统计、时间趋势、中英文关键词
+- x_propagation: 推文类型分布、时间分布、高频词、活跃账户、互动指标
+- cross_platform: 关键词对比、情感对比、叙事差异、共同关注点
+- propagation_trends: 新闻与推文每日趋势、热门推文排行
+
+**各章写作要点**：
+- 第3章（南非新闻概览）：重点展示新闻来源多样性和时间覆盖完整性
+- 第4章（舆情焦点与关键议题）：从新闻和推文中提炼核心舆情议题，展示议题热度和代表性观点，追踪议题演化脉络
+- 第5章（X平台舆情概览）：关注推文类型构成和用户互动特征
+- 第6章（跨平台主题对比）：突出新闻端和社交端的关注点差异，使用对比表格
+- 第7章（跨平台情感对比）：用数据说明两端情感基调的异同
+- 第8章（传播趋势与热点内容）：呈现时间趋势对比和热门内容排行
+
+**输出要求**：
+遵循 ReportEngine IR 规范，使用允许的 block 类型，优先使用 KPI 卡片、表格和 Chart.js 图表展示数据。
+"""
+
+
+def build_sa_chapter_context_prompt(
+    chapter_number: int,
+    chapter_title: str,
+    data_bundles: list = None,
+) -> str:
+    """构建南非专题章节的上下文提示词，注入dataBundle数据。"""
+    prompt = SYSTEM_PROMPT_SA_CHAPTER_CONTEXT.format(
+        chapter_number=chapter_number,
+        chapter_title=chapter_title,
+    )
+    if data_bundles:
+        import json as _json
+        bundles_json = _json.dumps(data_bundles, ensure_ascii=False, indent=2)
+        prompt += f"\n\n**本章可用的 dataBundles 结构化数据**：\n```json\n{bundles_json}\n```\n请直接引用以上数据，不要凭空构造数字。"
+    return prompt

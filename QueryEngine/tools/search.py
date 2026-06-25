@@ -49,27 +49,27 @@ class SearchResult:
     网页搜索结果数据类
     包含 published_date 属性来存储新闻发布日期
     """
-    title: str
-    url: str
-    content: str
-    score: Optional[float] = None
-    raw_content: Optional[str] = None
-    published_date: Optional[str] = None
+    title: str                                  # 标题
+    url: str                                    # 原文链接
+    content: str                                # 摘要/正文片段
+    score: Optional[float] = None               # Tavily 给的相关度评分
+    raw_content: Optional[str] = None           # 原始全文（如有）
+    published_date: Optional[str] = None        # 新闻发布日期
 
 @dataclass
 class ImageResult:
-    """图片搜索结果数据类"""
-    url: str
-    description: Optional[str] = None
+    """图片搜索结果数据类（search_images_for_news 用）"""
+    url: str                                    # 图片链接
+    description: Optional[str] = None           # 图片描述
 
 @dataclass
 class TavilyResponse:
     """封装Tavily API的完整返回结果，以便在工具间传递"""
-    query: str
-    answer: Optional[str] = None
-    results: List[SearchResult] = field(default_factory=list)
-    images: List[ImageResult] = field(default_factory=list)
-    response_time: Optional[float] = None
+    query: str                                  # 实际查询词（失败时为占位串）
+    answer: Optional[str] = None                # AI 生成的摘要（仅 deep_search 等开启时有）
+    results: List[SearchResult] = field(default_factory=list)  # 网页结果列表
+    images: List[ImageResult] = field(default_factory=list)    # 图片结果列表
+    response_time: Optional[float] = None       # 接口耗时
 
 
 # --- 2. 核心客户端与专用工具集 ---
@@ -92,14 +92,18 @@ class TavilyNewsAgency:
                 raise ValueError("Tavily API Key未找到！请设置TAVILY_API_KEY环境变量或在初始化时提供")
         self._client = TavilyClient(api_key=api_key)
 
+    # 失败兜底：重试用尽仍异常时返回一个占位 TavilyResponse(query="搜索失败")，不抛出
     @with_graceful_retry(SEARCH_API_RETRY_CONFIG, default_return=TavilyResponse(query="搜索失败"))
     def _search_internal(self, **kwargs) -> TavilyResponse:
         """内部通用的搜索执行器，所有工具最终都调用此方法"""
         try:
+            # 统一强制 topic='general'（注：覆盖了文档里 'news' 的默认说法）
             kwargs['topic'] = 'general'
+            # 过滤掉值为 None 的参数，避免传给 Tavily SDK 报错
             api_params = {k: v for k, v in kwargs.items() if v is not None}
             response_dict = self._client.search(**api_params)
-            
+
+            # 把 Tavily 原始 dict 解析成统一的 SearchResult / ImageResult
             search_results = [
                 SearchResult(
                     title=item.get('title'),

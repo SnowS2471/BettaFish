@@ -74,6 +74,12 @@ class DocumentLayoutNode(BaseNode):
             "forumLogs": forum_logs,
         }
 
+        # 南非专题模板：注入视觉与结构提示
+        template_name = (template_overview or {}).get("template_name", "")
+        is_sa_template = "南非" in template_name
+        if is_sa_template:
+            payload["_saTemplateHints"] = self._sa_template_hints(sections)
+
         user_message = build_document_layout_prompt(payload)
         response = self.llm_client.stream_invoke_to_string(
             SYSTEM_PROMPT_DOCUMENT_LAYOUT,
@@ -82,7 +88,90 @@ class DocumentLayoutNode(BaseNode):
             top_p=0.9,
         )
         design = self._parse_response(response)
+
+        # 南非专题模板：注入默认视觉元素
+        if is_sa_template:
+            design = self._apply_sa_defaults(design)
+
         logger.info("文档标题/目录设计已生成")
+        return design
+
+    @staticmethod
+    def _sa_template_hints(sections: List[TemplateSection]) -> Dict[str, Any]:
+        """
+        为南非专题模板生成结构化的视觉与布局提示。
+
+        Args:
+            sections: 模板章节列表
+
+        Returns:
+            包含 themeTokens、hero 建议、layoutNotes 等提示的字典
+        """
+        return {
+            "themeTokens": {
+                "primary": "#007A4D",
+                "secondary": "#FFB81C",
+                "accent": "#DE3831",
+                "dark": "#001489",
+                "neutral": "#333333",
+                "bgLight": "#FAFAFA",
+                "description": "南非国旗配色主题：绿金红蓝黑",
+            },
+            "hero": {
+                "summary": "本报告整合南非主流新闻媒体与X/Twitter平台数据，针对专题进行跨语言、跨平台舆情分析",
+                "highlights": [
+                    "多源数据整合：覆盖南非5大新闻网站与X平台社交媒体数据",
+                    "跨语言分析：系统后台利用翻译能力增强多语言数据检索，提升分析覆盖率",
+                    "跨平台对比：新闻媒体与社交媒体主题/情感/趋势多维度对比",
+                ],
+            },
+            "layoutNotes": (
+                "建议封面加入'南非专题'标识，使用绿金配色主题；"
+                "第4章舆情焦点章节使用KPI卡片和表格展示核心议题分布；"
+                "第6-7章跨平台对比使用左右对比布局强化视觉对比效果"
+            ),
+        }
+
+    @staticmethod
+    def _apply_sa_defaults(design: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        当 LLM 未返回南非相关视觉元素时，注入默认值。
+
+        Args:
+            design: LLM 返回的设计结果
+
+        Returns:
+            补全后的设计结果
+        """
+        if not design:
+            return design
+
+        # 补全 hero
+        hero = design.setdefault("hero", {})
+        if not hero.get("summary"):
+            hero["summary"] = (
+                "本报告整合南非主流新闻媒体与X/Twitter平台数据，"
+                "针对专题进行跨语言、跨平台舆情分析"
+            )
+        if not hero.get("highlights"):
+            hero["highlights"] = [
+                "多源数据整合：覆盖南非5大新闻网站与X平台社交媒体数据",
+                "跨语言分析：系统后台利用翻译能力增强多语言数据检索",
+                "跨平台对比：新闻媒体与社交媒体主题/情感/趋势多维度对比",
+            ]
+
+        # 补全主题色
+        theme = design.setdefault("themeTokens", {})
+        if not theme:
+            theme.update({
+                "primary": "#007A4D",
+                "secondary": "#FFB81C",
+                "accent": "#DE3831",
+                "dark": "#001489",
+                "neutral": "#333333",
+                "bgLight": "#FAFAFA",
+            })
+
         return design
 
     def _parse_response(self, raw: str) -> Dict[str, Any]:

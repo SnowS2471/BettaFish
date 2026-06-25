@@ -1,6 +1,9 @@
 """
 节点处理模块
-实现Deep Search Agent的各个处理步骤
+
+汇集 Deep Search Agent 的各处理步骤并统一导出。执行顺序：
+ReportStructureNode（拆段落） -> FirstSearchNode（首次检索词） -> FirstSummaryNode（段落初稿）
+-> ReflectionNode + ReflectionSummaryNode（多轮补充） -> ReportFormattingNode（汇总成报告）。
 """
 
 from .base_node import BaseNode

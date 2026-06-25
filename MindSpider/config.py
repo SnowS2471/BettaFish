@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-存储数据库连接信息和API密钥
+MindSpider 配置（数据库连接 + LLM 密钥）
+
+pydantic-settings：从环境变量/.env 自动加载。.env 优先取当前工作目录，其次 MindSpider 上级目录。
+统一的 DB_* 命名同时服务 MySQL/PostgreSQL；LLM 用 MINDSPIDER_*（默认 DeepSeek），主要供
+TopicExtractor 提取关键词使用。
 """
 
 from pydantic_settings import BaseSettings

@@ -265,7 +265,9 @@ class TemplateSelectionNode(BaseNode):
             return "适用于社会热点和公共事件分析"
         elif '突发' in template_name or '危机' in template_name:
             return "适用于突发事件和危机公关"
-        
+        elif '南非' in template_name or ('专题' in template_name and '舆情' in template_name):
+            return "适用于南非新闻与X平台跨平台舆情专题分析，系统后台利用翻译能力增强多语言数据检索与分析"
+
         return "通用报告模板"
     
 
