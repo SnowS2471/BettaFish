@@ -1,6 +1,12 @@
 """
-Forum日志读取工具
-用于读取forum.log中的最新HOST发言
+Forum 日志读取工具（被三个 Agent 的 SummaryNode 复用）
+
+ForumEngine 把主持人发言写进 logs/forum.log 的 [HOST] 行；本模块提供从该文件读取 HOST/Agent
+发言的纯函数，是「主持人引导 → 反哺各 Agent prompt」闭环的读取端：
+- get_latest_host_speech：取最新一条 HOST 发言（SummaryNode 注入 prompt 用）；
+- get_all_host_speeches / get_recent_agent_speeches：取全部 HOST / 最近 N 条 Agent 发言；
+- format_host_speech_for_prompt：把 HOST 发言包装成可直接拼进 prompt 的 Markdown 片段。
+读取均做了「文件不存在 / 读失败」的容错，并把转义的 \\n 还原为真实换行。
 """
 
 import re

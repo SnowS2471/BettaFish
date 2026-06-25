@@ -1,6 +1,12 @@
 """
-Deep Search Agent状态管理
-定义所有状态数据结构和操作方法
+Deep Search Agent 状态管理
+
+定义贯穿整个研究流程、被各节点不断读写的状态数据结构（四层嵌套）：
+    State          整篇报告：query / report_title / paragraphs[] / final_report
+      └─ Paragraph     单个段落：title / content(预期内容) / research
+           └─ Research    单段落研究进度：search_history[] / latest_summary / reflection_iteration
+                └─ Search     单条搜索结果：query / url / title / content / score
+所有结构都支持 to_dict/from_dict 与 JSON 序列化，用于中间状态保存与 inter-agent 通信。
 """
 
 from dataclasses import dataclass, field

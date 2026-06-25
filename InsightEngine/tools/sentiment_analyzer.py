@@ -1,6 +1,12 @@
 """
 多语言情感分析工具
-基于WeiboMultilingualSentiment模型为InsightEngine提供情感分析功能
+
+为 InsightEngine 的搜索结果提供情感倾向分析。虽然类名带「Weibo」，实际加载的是
+HuggingFace 的 tabularisai/multilingual-sentiment-analysis 模型，支持中英等 20+ 语言，
+输出 5 级情感（非常负面 / 负面 / 中性 / 正面 / 非常正面）。
+
+关键设计：模型重、依赖多，因此「懒加载 + 优雅降级」——torch/transformers 缺失或开关关闭时
+自动禁用（is_disabled=True），所有分析方法转为「透传」（返回原文、不报错），不阻断主流程。
 """
 
 import os
@@ -79,19 +85,21 @@ class BatchSentimentResult:
 class WeiboMultilingualSentimentAnalyzer:
     """
     多语言情感分析器
-    封装WeiboMultilingualSentiment模型，为AI Agent提供情感分析功能
+
+    封装情感分析模型，向 Agent 暴露单条/批量/查询结果三种分析入口。实例创建时只做
+    依赖与开关检查（不加载模型）；真正加载在 initialize() 里完成。
     """
 
     def __init__(self):
-        """初始化情感分析器"""
+        """初始化情感分析器（仅设状态与标签映射，不加载模型）"""
         self.model = None
         self.tokenizer = None
         self.device = None
-        self.is_initialized = False
-        self.is_disabled = False
+        self.is_initialized = False      # 模型是否已加载
+        self.is_disabled = False         # 是否被禁用（依赖缺失/开关关闭/加载失败）
         self.disable_reason: Optional[str] = None
 
-        # 情感标签映射（5级分类）
+        # 模型输出的类别索引 -> 中文情感标签（5 级分类）
         self.sentiment_map = {
             0: "非常负面",
             1: "负面",
@@ -100,6 +108,7 @@ class WeiboMultilingualSentimentAnalyzer:
             4: "非常正面",
         }
 
+        # 构造期就决定是否禁用：开关关闭、或缺少 torch/transformers 依赖
         if not SENTIMENT_ANALYSIS_ENABLED:
             self.disable("情感分析功能已在配置中关闭。")
         elif not (TORCH_AVAILABLE and TRANSFORMERS_AVAILABLE):
@@ -157,7 +166,10 @@ class WeiboMultilingualSentimentAnalyzer:
 
     def initialize(self) -> bool:
         """
-        初始化模型和分词器
+        初始化模型和分词器（懒加载，首次分析前由调用方触发）
+
+        本地若已缓存模型则直接加载，否则首次从 HuggingFace 下载并保存到本地；加载失败
+        会自动 disable 并返回 False（主流程据此走透传，不报错）。
 
         Returns:
             是否初始化成功
@@ -474,6 +486,10 @@ class WeiboMultilingualSentimentAnalyzer:
         对查询结果进行情感分析
         专门用于分析从MediaCrawlerDB返回的查询结果
 
+        这是 agent._perform_sentiment_analysis 调用的主入口：抽取文本 -> 批量分析 ->
+        统计情感分布、收集高置信度(>=min_confidence)样本、生成一句话摘要。模型不可用时
+        返回 _build_passthrough_analysis 的透传结构（available=False）。
+
         Args:
             query_results: 查询结果列表，每个元素包含文本内容
             text_field: 文本内容字段名，默认为"content"
@@ -628,7 +644,7 @@ class WeiboMultilingualSentimentAnalyzer:
         }
 
 
-# 创建全局实例（延迟初始化）
+# 全局单例（延迟初始化）：全项目共享一份模型权重，避免重复加载
 multilingual_sentiment_analyzer = WeiboMultilingualSentimentAnalyzer()
 
 

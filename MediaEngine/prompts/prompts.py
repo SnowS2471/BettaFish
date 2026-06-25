@@ -1,6 +1,14 @@
 """
 Deep Search Agent 的所有提示词定义
-包含各个阶段的系统提示词和JSON Schema定义
+
+集中存放各阶段的「系统提示词 + JSON Schema」，与流程一一对应：
+- SYSTEM_PROMPT_REPORT_STRUCTURE    Step1 拆分段落（≤5 段）
+- SYSTEM_PROMPT_FIRST_SEARCH        首次检索词（提示词列了 Bocha 工具，schema 要 search_tool，但解析层只取 search_query）
+- SYSTEM_PROMPT_FIRST_SUMMARY       段落初稿
+- SYSTEM_PROMPT_REFLECTION          反思检索词
+- SYSTEM_PROMPT_REFLECTION_SUMMARY  反思增补段落
+- SYSTEM_PROMPT_REPORT_FORMATTING   汇总成最终 Markdown
+各 *_schema 用于约束 / 校验 LLM 的 JSON 输入输出。
 """
 
 import json

@@ -1,6 +1,8 @@
 """
-报告结构生成节点
-负责根据查询生成报告的整体结构
+报告结构生成节点（Step 1）
+
+根据用户 query 让 LLM 规划报告整体结构（≤5 个段落，每段含标题与「预期内容」），作为后续
+逐段落检索/总结的大纲。含多级 JSON 容错，彻底失败时退化为内置的默认两段结构。
 """
 
 import json
@@ -20,7 +22,7 @@ from ..utils.text_processing import (
 
 
 class ReportStructureNode(StateMutationNode):
-    """生成报告结构的节点"""
+    """生成报告结构的节点：mutate_state 会设置 state.query/report_title 并把规划出的段落加入 state。"""
     
     def __init__(self, llm_client, query: str):
         """

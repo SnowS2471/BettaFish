@@ -1,6 +1,13 @@
 """
-论坛主持人模块
-使用硅基流动的Qwen3模型作为论坛主持人，引导多个agent进行讨论
+论坛主持人模块（ForumEngine 的 LLM 部分）
+
+用一个独立的 LLM（默认硅基流动的 Qwen3-235B，配置键 FORUM_HOST_*）扮演「论坛主持人」：
+把 monitor 汇集的若干条 Agent 发言喂给它，生成一段结构化引导发言（事件梳理/观点整合/趋势预测/
+问题引导），写回 forum.log 的 [HOST] 行。各 Agent 的 SummaryNode 随后会读取这段 HOST 发言注入
+自己的 prompt，从而被「引导」到新的角度，避免多 Agent 同质化。
+
+要点：全局单例 + with_graceful_retry 容错（失败返回 success=False 不抛异常），prompt 里反复声明
+「科研用途、已过伦理审查」以降低模型对舆情话题的拒答概率。
 """
 
 from openai import OpenAI
@@ -95,7 +102,11 @@ class ForumHost:
     def _parse_forum_logs(self, forum_logs: List[str]) -> Dict[str, Any]:
         """
         解析论坛日志，提取agent发言
-        
+
+        按 `[时间] [发言者] 内容` 解析每行：只保留 INSIGHT/MEDIA/QUERY 三个 Agent 的发言，
+        跳过 SYSTEM 标记与 HOST 自己的发言（避免主持人被自己的历史发言带偏）；
+        并把日志里转义的 \\n 还原成真实换行。
+
         Returns:
             包含agent发言的字典
         """

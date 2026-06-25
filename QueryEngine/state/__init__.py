@@ -1,6 +1,7 @@
 """
 状态管理模块
-定义Deep Search Agent的状态数据结构
+
+导出贯穿全流程的状态数据结构 State / Paragraph / Research / Search（定义见 state.py）。
 """
 
 from .state import State, Paragraph, Research, Search

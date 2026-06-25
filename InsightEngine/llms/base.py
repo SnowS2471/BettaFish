@@ -1,5 +1,10 @@
 """
-Unified OpenAI-compatible LLM client for the Insight Engine, with retry support.
+Insight Engine 的统一 LLM 客户端（OpenAI 兼容，带重试）。
+
+所有节点都通过本模块的 LLMClient 调用大模型。关键点：
+- 默认走流式并用 stream_invoke_to_string 做「字节安全拼接」，避免中文多字节字符被切断；
+- 每次调用都注入当前时间前缀，让模型知道「今天」；
+- 用 utils.retry_helper 的 with_retry 做重试（导入失败则降级为空装饰器）。
 """
 
 import os
@@ -113,6 +118,10 @@ class LLMClient:
 
         timeout = kwargs.pop("timeout", self.timeout)
 
+        # 构建实际请求URL用于调试
+        req_url = f"{self.base_url.rstrip('/')}/chat/completions" if self.base_url else "https://api.openai.com/v1/chat/completions"
+        logger.debug(f"流式请求 URL: {req_url} | model={self.model_name} | stream={extra_params.get('stream')}")
+
         try:
             stream = self.client.chat.completions.create(
                 model=self.model_name,
@@ -120,14 +129,14 @@ class LLMClient:
                 timeout=timeout,
                 **extra_params,
             )
-            
+
             for chunk in stream:
                 if chunk.choices and len(chunk.choices) > 0:
                     delta = chunk.choices[0].delta
                     if delta and delta.content:
                         yield delta.content
         except Exception as e:
-            logger.error(f"流式请求失败: {str(e)}")
+            logger.error(f"流式请求失败 | URL={req_url} | model={self.model_name} | 错误: {str(e)}")
             raise e
     
     @with_retry(LLM_RETRY_CONFIG)

@@ -1,6 +1,7 @@
 """
-LLM module
-Provides a unified OpenAI-compatible client for the Insight Engine.
+LLM 模块
+
+导出 InsightEngine 统一的 OpenAI 兼容客户端 LLMClient（实现见 base.py）。
 """
 
 from .base import LLMClient

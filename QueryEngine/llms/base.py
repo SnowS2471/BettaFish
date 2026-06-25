@@ -1,5 +1,10 @@
 """
-Unified OpenAI-compatible LLM client for the Query Engine, with retry support.
+Query Engine 的统一 LLM 客户端（OpenAI 兼容，带重试）。
+
+所有节点都通过本模块的 LLMClient 调用大模型。关键点：
+- 默认走流式并用 stream_invoke_to_string 做「字节安全拼接」，避免中文多字节字符被切断；
+- 每次调用都注入当前时间前缀，让模型知道「今天」；
+- 用 utils.retry_helper 的 with_retry 做重试（导入失败则降级为空装饰器）。
 """
 
 import os

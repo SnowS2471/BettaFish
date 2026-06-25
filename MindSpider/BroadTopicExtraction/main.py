@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-BroadTopicExtraction模块 - 主程序
-整合话题提取的完整工作流程和命令行工具
+BroadTopicExtraction模块 - 主程序（阶段一编排）
+
+把三个组件串成「每日话题提取」工作流：
+    NewsCollector（抓多源热点新闻） → TopicExtractor（LLM 提关键词+总结） → DatabaseManager（存 daily_topics）
+产出的关键词既写库，也落盘到 data/daily_keywords.txt，供阶段二 DeepSentimentCrawling 使用。
+全程 async（新闻抓取是 IO 密集）。
 """
 
 import sys

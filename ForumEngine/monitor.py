@@ -1,5 +1,23 @@
 """
-日志监控器 - 实时监控三个log文件中的SummaryNode输出
+日志监控器 - 实时监控三个 log 文件中的 SummaryNode 输出（ForumEngine 核心）
+
+职责概述
+--------
+ForumEngine 是「跨 Agent 协同」的中枢，但它不调度 Agent，而是**旁路监听日志**：
+后台线程轮询 logs/{insight,media,query}.log，从中抓取三个引擎 SummaryNode 产出的段落
+总结，按统一格式汇集到 logs/forum.log；每累积 5 条 Agent 发言，就调用论坛主持人(LLM)
+生成一段引导发言写回 forum.log。各 Agent 的 SummaryNode 又会通过 utils/forum_reader 读取
+最新 [HOST] 发言并注入自己的 prompt——由此形成「发言→主持→再发言」的闭环，避免多 Agent
+研究方向同质化。
+
+关键机制
+--------
+1. 增量读取：靠记录每个文件的字节偏移(file_positions)只读新增内容；文件变小视为被清空并重置。
+2. 会话生命周期：检测到某引擎首次出现 FirstSummaryNode 即「开场」(清空 forum.log)；日志缩短或
+   长时间无活动即「结束」(写入结束标记)。
+3. 目标行识别 + 噪声过滤：只抓 SummaryNode 的「清理后的输出」，排除 ERROR 块、搜索节点输出等。
+4. 多行 JSON 捕获：总结是跨行 JSON，用状态机逐行缓冲到结束括号再整体解析、抽正文。
+5. 主持人触发：满 5 条发言触发一次 HOST 发言（同步执行，带 is_host_generating 防重入）。
 """
 
 import os
@@ -13,7 +31,7 @@ from typing import Dict, Optional, List
 from threading import Lock
 from loguru import logger
 
-# 导入论坛主持人模块
+# 导入论坛主持人模块；缺失时降级为「纯监控模式」（只汇集发言，不生成 HOST 引导）
 try:
     from .llm_host import generate_host_speech
     HOST_AVAILABLE = True
@@ -22,39 +40,36 @@ except ImportError:
     HOST_AVAILABLE = False
 
 class LogMonitor:
-    """基于文件变化的智能日志监控器"""
-   
+    """基于文件变化的智能日志监控器（后台线程轮询三个引擎日志并汇集到 forum.log）"""
+
     def __init__(self, log_dir: str = "logs"):
-        """初始化日志监控器"""
+        """初始化日志监控器：设定监控目标、各类增量/会话/主持人状态。"""
         self.log_dir = Path(log_dir)
         self.forum_log_file = self.log_dir / "forum.log"
-       
-        # 要监控的日志文件
+
+        # 要监控的三个引擎日志
         self.monitored_logs = {
             'insight': self.log_dir / 'insight.log',
             'media': self.log_dir / 'media.log',
             'query': self.log_dir / 'query.log'
         }
-       
-        # 监控状态
+
+        # 监控/会话状态
         self.is_monitoring = False
         self.monitor_thread = None
-        self.file_positions = {}  # 记录每个文件的读取位置
-        self.file_line_counts = {}  # 记录每个文件的行数
-        self.is_searching = False  # 是否正在搜索
-        self.search_inactive_count = 0  # 搜索非活跃计数器
-        self.write_lock = Lock()  # 写入锁，防止并发写入冲突
-        
+        self.file_positions = {}  # 每个文件已读到的字节偏移（增量读取的关键）
+        self.file_line_counts = {}  # 每个文件的行数（用于判断增长/缩短）
+        self.is_searching = False  # 是否处于一次「论坛会话」中（首条总结触发开场）
+        self.search_inactive_count = 0  # 连续无活动的轮次计数（用于超时结束）
+        self.write_lock = Lock()  # 写 forum.log 的锁，防止多线程写入交错
+
         # 主持人相关状态
-        self.agent_speeches_buffer = []  # agent发言缓冲区
-        self.host_speech_threshold = 5  # 每5条agent发言触发一次主持人发言
-        self.is_host_generating = False  # 主持人是否正在生成发言
-       
-        # 目标节点识别模式
-        # 1. 类名（旧格式可能包含）
-        # 2. 完整模块路径（实际日志格式，包含引擎前缀）
-        # 3. 部分模块路径（兼容性）
-        # 4. 关键标识文本
+        self.agent_speeches_buffer = []  # Agent 发言缓冲区，满阈值触发 HOST
+        self.host_speech_threshold = 5  # 每 5 条 Agent 发言触发一次主持人发言
+        self.is_host_generating = False  # 主持人是否正在生成（防重入）
+
+        # 目标节点识别模式：兼容「类名 / 完整模块路径 / 部分路径 / 中文标识文本」多种日志格式，
+        # 只要命中其一即认为该行来自三引擎的 SummaryNode。
         self.target_node_patterns = [
             'FirstSummaryNode',  # 类名
             'ReflectionSummaryNode',  # 类名
@@ -65,13 +80,13 @@ class LogMonitor:
             '正在生成首次段落总结',  # FirstSummaryNode的标识
             '正在生成反思总结',  # ReflectionSummaryNode的标识
         ]
-        
-        # 多行内容捕获状态
-        self.capturing_json = {}  # 每个app的JSON捕获状态
-        self.json_buffer = {}     # 每个app的JSON缓冲区
-        self.json_start_line = {} # 每个app的JSON开始行
-        self.in_error_block = {}  # 每个app是否在ERROR块中
-       
+
+        # 多行 JSON 捕获状态（按 app 维度各自维护，互不干扰）
+        self.capturing_json = {}  # 是否正在捕获某 app 的 JSON
+        self.json_buffer = {}     # 某 app 的 JSON 行缓冲
+        self.json_start_line = {} # 某 app 的 JSON 起始行
+        self.in_error_block = {}  # 某 app 是否处于 ERROR 块中（块内内容一律丢弃）
+
         # 确保logs目录存在
         self.log_dir.mkdir(exist_ok=True)
    
@@ -423,29 +438,31 @@ class LogMonitor:
         return new_lines
    
     def process_lines_for_json(self, lines: List[str], app_name: str) -> List[str]:
-        """处理行以捕获多行JSON内容
-        
-        实现ERROR块过滤：如果遇到ERROR级别的日志，拒绝处理直到遇到下一个INFO级别的日志
+        """处理新增行、捕获多行 JSON 总结并抽取正文。
+
+        因为总结是「清理后的输出: {...}」形式的跨行 JSON，需用状态机逐行缓冲到结束括号再整体解析。
+        同时实现 ERROR 块过滤：一旦遇到 ERROR 级别日志就进入「丢弃」状态，直到下一条 INFO 才恢复——
+        避免把报错堆栈、解析失败信息误当成总结正文写进论坛。
         """
         captured_contents = []
-        
-        # 初始化状态
+
+        # 初始化该 app 的捕获/错误块状态
         if app_name not in self.capturing_json:
             self.capturing_json[app_name] = False
             self.json_buffer[app_name] = []
         if app_name not in self.in_error_block:
             self.in_error_block[app_name] = False
-        
+
         for line in lines:
             if not line.strip():
                 continue
-            
-            # 首先检查日志级别，更新ERROR块状态
+
+            # 先按日志级别更新 ERROR 块状态：ERROR 进入、INFO 退出，其余级别保持
             log_level = self.get_log_level(line)
             if log_level == 'ERROR':
                 # 遇到ERROR，进入ERROR块状态
                 self.in_error_block[app_name] = True
-                # 如果正在捕获JSON，立即停止并清空缓冲区
+                # 若此刻正在捕获 JSON，立即作废缓冲区（这段 JSON 很可能是失败输出）
                 if self.capturing_json[app_name]:
                     self.capturing_json[app_name] = False
                     self.json_buffer[app_name] = []
@@ -455,8 +472,8 @@ class LogMonitor:
                 # 遇到INFO，退出ERROR块状态
                 self.in_error_block[app_name] = False
             # 其他级别（WARNING、DEBUG等）保持当前状态
-            
-            # 如果在ERROR块中，拒绝处理所有内容
+
+            # 处于 ERROR 块内：一律丢弃
             if self.in_error_block[app_name]:
                 # 如果正在捕获JSON，立即停止并清空缓冲区
                 if self.capturing_json[app_name]:
@@ -464,20 +481,20 @@ class LogMonitor:
                     self.json_buffer[app_name] = []
                 # 跳过当前行，不处理
                 continue
-                
-            # 检查是否是目标节点行和JSON开始标记
+
+            # 判断该行是否为目标节点行、是否为 JSON 起始标记
             is_target = self.is_target_log_line(line)
             is_json_start = self.is_json_start_line(line)
-            
-            # 只有目标节点（SummaryNode）的JSON输出才应该被捕获
-            # 过滤掉SearchNode等其他节点的输出（它们不是目标节点，即使有JSON也不会被捕获）
+
+            # 仅捕获「目标节点(SummaryNode) 且 含『清理后的输出: {』」的 JSON，
+            # 从而过滤掉 SearchNode 等其它节点即便含 JSON 的输出。
             if is_target and is_json_start:
                 # 开始捕获JSON（必须是目标节点且包含"清理后的输出: {"）
                 self.capturing_json[app_name] = True
                 self.json_buffer[app_name] = [line]
                 self.json_start_line[app_name] = line
-                
-                # 检查是否是单行JSON
+
+                # 起始行就自闭合（单行完整 JSON）则立即解析
                 if line.strip().endswith("}"):
                     # 单行JSON，立即处理
                     content = self.extract_json_content([line])
@@ -487,25 +504,24 @@ class LogMonitor:
                         captured_contents.append(f"{clean_content}")
                     self.capturing_json[app_name] = False
                     self.json_buffer[app_name] = []
-                    
+
             elif is_target and self.is_valuable_content(line):
-                # 其他有价值的SummaryNode内容（必须是目标节点且有价值）
+                # 目标节点的非 JSON、但「有价值」的单行内容，直接收录
                 clean_content = self._clean_content_tags(self.extract_node_content(line), app_name)
                 captured_contents.append(f"{clean_content}")
-                    
+
             elif self.capturing_json[app_name]:
-                # 正在捕获JSON的后续行
+                # 正在捕获 JSON 的后续行：先入缓冲
                 self.json_buffer[app_name].append(line)
-                
-                # 检查是否是JSON结束
-                # 先清理时间戳，然后判断清理后的行是否是结束标记
+
+                # 判断是否到达 JSON 结束：先剥掉行首的时间戳/级别前缀，再看是否为纯结束括号
                 cleaned_line = line.strip()
                 # 清理旧格式时间戳：[HH:MM:SS]
                 cleaned_line = re.sub(r'^\[\d{2}:\d{2}:\d{2}\]\s*', '', cleaned_line)
                 # 清理新格式时间戳：YYYY-MM-DD HH:mm:ss.SSS | LEVEL | module:function:line -
                 cleaned_line = re.sub(r'^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3}\s*\|\s*[A-Z]+\s*\|\s*[^|]+?\s*-\s*', '', cleaned_line)
                 cleaned_line = cleaned_line.strip()
-                
+
                 # 清理后判断是否是结束标记
                 if cleaned_line == "}" or cleaned_line == "] }":
                     # JSON结束，处理完整的JSON
@@ -514,46 +530,50 @@ class LogMonitor:
                         # 去除重复的标签和格式化
                         clean_content = self._clean_content_tags(content, app_name)
                         captured_contents.append(f"{clean_content}")
-                    
+
                     # 重置状态
                     self.capturing_json[app_name] = False
                     self.json_buffer[app_name] = []
-        
+
         return captured_contents
-    
+
     def _trigger_host_speech(self):
-        """触发主持人发言（同步执行）"""
+        """触发主持人发言（同步执行）。
+
+        取缓冲区前 5 条 Agent 发言交给 LLM 主持人生成引导，写入 forum.log 的 [HOST] 行，
+        成功后消费掉这 5 条。is_host_generating 作为防重入标志，避免主循环重复触发。
+        """
         if not HOST_AVAILABLE or self.is_host_generating:
             return
-        
+
         try:
-            # 设置生成标志
+            # 设置生成标志（防重入）
             self.is_host_generating = True
-            
-            # 获取缓冲区的5条发言
+
+            # 取最早的 5 条；不足 5 条直接放弃本次触发
             recent_speeches = self.agent_speeches_buffer[:5]
             if len(recent_speeches) < 5:
                 self.is_host_generating = False
                 return
-            
+
             logger.info("ForumEngine: 正在生成主持人发言...")
-            
+
             # 调用主持人生成发言（传入最近5条）
             host_speech = generate_host_speech(recent_speeches)
-            
+
             if host_speech:
                 # 写入主持人发言到forum.log
                 self.write_to_forum_log(host_speech, "HOST")
                 logger.info(f"ForumEngine: 主持人发言已记录")
-                
-                # 清空已处理的5条发言
+
+                # 消费掉已处理的 5 条，余下的留待下次累积
                 self.agent_speeches_buffer = self.agent_speeches_buffer[5:]
             else:
                 logger.error("ForumEngine: 主持人发言生成失败")
-            
+
             # 重置生成标志
             self.is_host_generating = False
-                
+
         except Exception as e:
             logger.exception(f"ForumEngine: 触发主持人发言时出错: {e}")
             self.is_host_generating = False
@@ -582,10 +602,15 @@ class LogMonitor:
         return content.strip()
    
     def monitor_logs(self):
-        """智能监控日志文件"""
+        """智能监控日志文件（后台线程主循环）。
+
+        每秒一轮：对三个引擎日志各自检测「增长/缩短」，增长则读新增行；尚未开场时遇到首条
+        FirstSummaryNode 即开场(清空 forum.log)；开场后把捕获到的总结写入 forum.log 并入缓冲区，
+        满 5 条触发 HOST。会话在「日志缩短」或「连续 7200 轮无活动」时结束。
+        """
         logger.info("ForumEngine: 论坛创建中...")
-       
-        # 初始化文件行数和位置 - 记录当前状态作为基线
+
+        # 以当前文件末尾为基线初始化：避免把启动前的历史日志当成新内容重放
         for app_name, log_file in self.monitored_logs.items():
             self.file_line_counts[app_name] = self.get_file_line_count(log_file)
             self.file_positions[app_name] = self.get_file_size(log_file)
@@ -593,30 +618,30 @@ class LogMonitor:
             self.json_buffer[app_name] = []
             self.in_error_block[app_name] = False
             # logger.info(f"ForumEngine: {app_name} 基线行数: {self.file_line_counts[app_name]}")
-       
+
         while self.is_monitoring:
             try:
-                # 同时检测三个log文件的变化
+                # 本轮三个文件的整体情况：是否有增长/缩短/捕获，用于驱动会话状态机
                 any_growth = False
                 any_shrink = False
                 captured_any = False
-               
+
                 # 为每个log文件独立处理
                 for app_name, log_file in self.monitored_logs.items():
                     current_lines = self.get_file_line_count(log_file)
                     previous_lines = self.file_line_counts.get(app_name, 0)
-                   
+
                     if current_lines > previous_lines:
                         any_growth = True
                         # 立即读取新增内容
                         new_lines = self.read_new_lines(log_file, app_name)
-                       
-                        # 先检查是否需要触发搜索（只触发一次）
+
+                        # 开场判定：尚未进入会话时，遇到首条 FirstSummaryNode 即开新会话
                         if not self.is_searching:
                             for line in new_lines:
                                 # 检查是否包含目标节点模式（支持多种格式）
                                 if line.strip() and self.is_target_log_line(line):
-                                    # 进一步确认是首次总结节点（FirstSummaryNode或包含"正在生成首次段落总结"）
+                                    # 进一步确认是首次总结节点（而非反思总结），作为「一轮研究开始」的信号
                                     if 'FirstSummaryNode' in line or '正在生成首次段落总结' in line:
                                         logger.info(f"ForumEngine: 在{app_name}中检测到第一次论坛发表内容")
                                         self.is_searching = True
@@ -624,47 +649,45 @@ class LogMonitor:
                                         # 清空forum.log开始新会话
                                         self.clear_forum_log()
                                         break  # 找到一个就够了，跳出循环
-                       
-                        # 处理所有新增内容（如果正在搜索状态）
+
+                        # 已开场则处理本批新增行（抓取/拼接 JSON 总结）
                         if self.is_searching:
                             # 使用新的处理逻辑
                             captured_contents = self.process_lines_for_json(new_lines, app_name)
-                            
+
                             for content in captured_contents:
                                 # 将app_name转换为大写作为标签（如 insight -> INSIGHT）
                                 source_tag = app_name.upper()
                                 self.write_to_forum_log(content, source_tag)
                                 # logger.info(f"ForumEngine: 捕获 - {content}")
                                 captured_any = True
-                                
-                                # 将发言添加到缓冲区（格式化为完整的日志行）
+
+                                # 同步写入主持人缓冲区（用与 forum.log 一致的行格式，便于 HOST 解析）
                                 timestamp = datetime.now().strftime('%H:%M:%S')
                                 log_line = f"[{timestamp}] [{source_tag}] {content}"
                                 self.agent_speeches_buffer.append(log_line)
-                                
-                                # 检查是否需要触发主持人发言
+
+                                # 满阈值且当前没有在生成时，同步触发一次主持人发言
                                 if len(self.agent_speeches_buffer) >= self.host_speech_threshold and not self.is_host_generating:
                                     # 同步触发主持人发言
                                     self._trigger_host_speech()
-                   
+
                     elif current_lines < previous_lines:
                         any_shrink = True
-                        # logger.info(f"ForumEngine: 检测到 {app_name} 日志缩短，将重置基线")
-                        # 重置文件位置到新的文件末尾
+                        # 文件变短=被清空/轮转，重置该 app 的偏移与 JSON 捕获状态，避免错位读取
                         self.file_positions[app_name] = self.get_file_size(log_file)
                         # 重置JSON捕获状态
                         self.capturing_json[app_name] = False
                         self.json_buffer[app_name] = []
                         self.in_error_block[app_name] = False
-                   
+
                     # 更新行数记录
                     self.file_line_counts[app_name] = current_lines
-               
-                # 检查是否应该结束当前搜索会话
+
+                # 会话结束判定（仅在会话进行中检查）
                 if self.is_searching:
                     if any_shrink:
-                        # log变短，结束当前搜索会话，重置为等待状态
-                        # logger.info("ForumEngine: 日志缩短，结束当前搜索会话，回到等待状态")
+                        # 任一日志被清空，视为上一轮研究结束：回到等待态并写结束标记
                         self.is_searching = False
                         self.search_inactive_count = 0
                         # 重置主持人相关状态
@@ -675,7 +698,7 @@ class LogMonitor:
                         self.write_to_forum_log(f"=== ForumEngine 论坛结束 - {end_time} ===", "SYSTEM")
                         # logger.info("ForumEngine: 已重置基线，等待下次FirstSummaryNode触发")
                     elif not any_growth and not captured_any:
-                        # 没有增长也没有捕获内容，增加非活跃计数
+                        # 本轮无增长也无捕获：累加无活动计数，达到 7200 轮（约 2 小时）则超时结束
                         self.search_inactive_count += 1
                         if self.search_inactive_count >= 7200:  # 超时无活动自动结束
                             logger.info("ForumEngine: 长时间无活动，结束论坛")
@@ -688,17 +711,17 @@ class LogMonitor:
                             end_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                             self.write_to_forum_log(f"=== ForumEngine 论坛结束 - {end_time} ===", "SYSTEM")
                     else:
-                        self.search_inactive_count = 0  # 重置计数器
-               
-                # 短暂休眠
+                        self.search_inactive_count = 0  # 有活动则重置计数器
+
+                # 轮询间隔 1 秒
                 time.sleep(1)
-               
+
             except Exception as e:
                 logger.exception(f"ForumEngine: 论坛记录中出错: {e}")
                 import traceback
                 traceback.print_exc()
                 time.sleep(2)
-       
+
         logger.info("ForumEngine: 停止论坛日志文件")
    
     def start_monitoring(self):

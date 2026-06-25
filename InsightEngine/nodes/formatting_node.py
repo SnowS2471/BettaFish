@@ -1,6 +1,10 @@
 """
-报告格式化节点
-负责将最终研究结果格式化为美观的Markdown报告
+报告格式化节点（Step 3）
+
+把各段落的「标题 + 最新总结」汇总成一份完整的 Markdown 舆情报告：
+- run()：优先让 LLM 按规范排版（SYSTEM_PROMPT_REPORT_FORMATTING）；
+- format_report_manually()：LLM 失败时的本地兜底排版，保证总有产出。
+本节点只产出文本、不修改 State（继承 BaseNode）。
 """
 
 import json
@@ -18,7 +22,7 @@ from ..utils.text_processing import (
 
 
 class ReportFormattingNode(BaseNode):
-    """格式化最终报告的节点"""
+    """格式化最终报告的节点：以 LLM 排版为主、手工排版为兜底。"""
     
     def __init__(self, llm_client):
         """

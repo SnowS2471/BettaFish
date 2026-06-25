@@ -1,3 +1,14 @@
+"""
+Markdown 渲染器：把 Document IR 降级渲染为 Markdown 文本。
+
+定位：HTML/PDF 之外的「纯文本」输出通道。Markdown 表达力有限，故采取「尽量保真 + 优雅降级」：
+- 图表 widget / 词云 → 统一转成 Markdown 表格（保住数据、丢掉可视化）；
+- callout / kpiGrid / engineQuote / swotTable / pestTable 等富块 → 用引用块/表格近似表达；
+- 内置一批针对 LLM「脏 IR」的修复（错误嵌套的表格行/单元格、被序列化成字符串的 inlineRun、
+  误把元数据 JSON 当正文的段落等）。
+渲染前先经 ChartReviewService 审查/修复图表数据。
+"""
+
 from __future__ import annotations
 
 import json
@@ -18,6 +29,7 @@ class MarkdownRenderer:
     """
 
     def __init__(self) -> None:
+        """初始化渲染器，document/metadata 在每次 render() 时填充。"""
         self.document: Dict[str, Any] = {}
         self.metadata: Dict[str, Any] = {}
 
@@ -67,6 +79,7 @@ class MarkdownRenderer:
     # ===== 章节与块级渲染 =====
 
     def _render_chapter(self, chapter: Dict[str, Any]) -> str:
+        """渲染单个章节：先输出一级标题，再渲染其 blocks（去掉与标题重复的首个 heading）。"""
         lines: List[str] = []
         title = chapter.get("title") or chapter.get("chapterId")
         blocks = chapter.get("blocks", []) if isinstance(chapter.get("blocks"), list) else []
@@ -85,6 +98,7 @@ class MarkdownRenderer:
         return "\n".join(lines).strip()
 
     def _render_blocks(self, blocks: List[Dict[str, Any]] | None, join_with_blank: bool = True) -> str:
+        """渲染一组块并用空行（或单换行）拼接；自动跳过空结果。"""
         rendered: List[str] = []
         for block in blocks or []:
             md = self._render_block(block)
@@ -99,6 +113,7 @@ class MarkdownRenderer:
         return separator.join(rendered)
 
     def _render_block(self, block: Any) -> str:
+        """单块分发：按 type 查 handlers 表调用对应渲染方法；未知类型走 JSON 兜底。"""
         if block is None:
             return ""
         if isinstance(block, str):
@@ -134,6 +149,7 @@ class MarkdownRenderer:
         return self._fallback_unknown(block)
 
     def _render_heading(self, block: Dict[str, Any]) -> str:
+        """heading → `#`*level 标题；一级标题前多插空行以拉开章节间距。"""
         level = block.get("level", 2)
         level = max(1, min(6, level))
         hashes = "#" * level
@@ -147,6 +163,7 @@ class MarkdownRenderer:
         return heading_line
 
     def _render_paragraph(self, block: Dict[str, Any]) -> str:
+        """paragraph → 渲染其 inlines；跳过被误当正文的元数据 JSON 段落。"""
         inlines = block.get("inlines", [])
         # 检测并跳过包含文档元数据 JSON 的段落
         if self._is_metadata_paragraph(inlines):
@@ -176,6 +193,7 @@ class MarkdownRenderer:
         return any(indicator in text for indicator in metadata_indicators)
 
     def _render_list(self, block: Dict[str, Any]) -> str:
+        """list → 有序/无序/任务列表；每个列表项可含多块，续行缩进两格。"""
         list_type = block.get("listType", "bullet")
         items = block.get("items") or []
         lines: List[str] = []
@@ -377,6 +395,7 @@ class MarkdownRenderer:
         return fixed_rows
 
     def _render_table(self, block: Dict[str, Any]) -> str:
+        """table → Markdown 表格；先修复嵌套行/单元格，再推断表头与列数后逐行输出。"""
         raw_rows = block.get("rows") or []
         if not raw_rows:
             return ""
@@ -436,6 +455,7 @@ class MarkdownRenderer:
         return "\n".join(lines)
 
     def _render_swot_table(self, block: Dict[str, Any]) -> str:
+        """swotTable → 四象限（S/W/O/T）各渲染成「序号|要点|详情|标签」小表。"""
         title = block.get("title") or "SWOT 分析"
         summary = block.get("summary")
         quadrants = [
@@ -475,6 +495,7 @@ class MarkdownRenderer:
         return "\n\n".join(lines)
 
     def _render_pest_table(self, block: Dict[str, Any]) -> str:
+        """pestTable → 四维度（P/E/S/T）各渲染成「序号|要点|详情|标签」小表。"""
         title = block.get("title") or "PEST 分析"
         summary = block.get("summary")
         dimensions = [
@@ -514,31 +535,37 @@ class MarkdownRenderer:
         return "\n\n".join(lines)
 
     def _render_blockquote(self, block: Dict[str, Any]) -> str:
+        """blockquote → 内部块渲染后整体加 `>` 引用前缀。"""
         inner = self._render_blocks(block.get("blocks", []))
         return self._quote_lines(inner)
 
     def _render_engine_quote(self, block: Dict[str, Any]) -> str:
+        """engineQuote → 引用某 Agent 原话：加粗来源标题 + 引用块。"""
         title = block.get("title") or block.get("engine") or "引用"
         inner = self._render_blocks(block.get("blocks", []))
         header = f"**{self._escape_text(title)}**"
         return self._quote_lines(f"{header}\n{inner}" if inner else header)
 
     def _render_code(self, block: Dict[str, Any]) -> str:
+        """code → 三反引号围栏代码块（带语言标识）。"""
         lang = block.get("lang") or ""
         content = block.get("content") or ""
         return f"```{lang}\n{content}\n```"
 
     def _render_math(self, block: Dict[str, Any]) -> str:
+        """math → `$$...$$` 块级公式（去掉已有定界符后重新包裹）。"""
         latex = self._normalize_math(block.get("latex", ""))
         if not latex:
             return ""
         return f"$$\n{latex}\n$$"
 
     def _render_figure(self, block: Dict[str, Any]) -> str:
+        """figure → 图片在 Markdown 里降级为带说明的占位引用。"""
         caption = block.get("caption") or "图像内容占位"
         return f"> ![图示占位]({''}) {self._escape_text(caption)}"
 
     def _render_callout(self, block: Dict[str, Any]) -> str:
+        """callout → 用引用块近似：首行标注语气(info/warning/...)，其后为内容。"""
         tone = block.get("tone") or "info"
         title = block.get("title")
         inner = self._render_blocks(block.get("blocks", []))
@@ -547,6 +574,7 @@ class MarkdownRenderer:
         return self._quote_lines(content)
 
     def _render_kpi_grid(self, block: Dict[str, Any]) -> str:
+        """kpiGrid → 「指标|数值|变化」三列表格。"""
         items = block.get("items") or []
         if not items:
             return ""
@@ -564,6 +592,7 @@ class MarkdownRenderer:
         return "\n".join(lines)
 
     def _render_widget(self, block: Dict[str, Any]) -> str:
+        """widget → 按 widgetType 分流：chart.js→数据表、wordcloud→词频表，其它→数据预览。"""
         widget_type = (block.get("widgetType") or "").lower()
         title = block.get("title") or (block.get("props", {}) or {}).get("title")
         title_prefix = f"**{self._escape_text(title)}**\n\n" if title else ""
@@ -586,6 +615,7 @@ class MarkdownRenderer:
     # ===== 工具方法 =====
 
     def _render_chart_as_table(self, block: Dict[str, Any]) -> str:
+        """chart.js widget → 「类别 + 各数据系列」二维表（labels 作行、datasets 作列）。"""
         data = self._coerce_chart_data(block.get("data") or {})
         labels = data.get("labels") or []
         datasets = data.get("datasets") or []
@@ -607,6 +637,7 @@ class MarkdownRenderer:
         return "\n".join(lines)
 
     def _render_wordcloud_as_table(self, block: Dict[str, Any]) -> str:
+        """wordcloud widget → 「关键词|权重|类别」表。"""
         items = self._collect_wordcloud_items(block)
         if not items:
             return "> 词云数据缺失，无法转为表格"
@@ -626,16 +657,19 @@ class MarkdownRenderer:
         return "\n".join(lines)
 
     def _render_cell_content(self, cell: Dict[str, Any]) -> str:
+        """把表格单元格内的块压成单行纯文本（表格内不能换行）。"""
         blocks = cell.get("blocks") if isinstance(cell, dict) else None
         return self._render_blocks_as_text(blocks)
 
     def _render_blocks_as_text(self, blocks: List[Dict[str, Any]] | None) -> str:
+        """把一组块降级为空格连接的单行纯文本（用于表格单元格）。"""
         texts: List[str] = []
         for block in blocks or []:
             texts.append(self._render_block_as_text(block))
         return " ".join(filter(None, texts))
 
     def _render_block_as_text(self, block: Any) -> str:
+        """单块 → 纯文本（表格内使用）：按类型抽取可读文本，丢弃排版。"""
         if isinstance(block, str):
             return self._escape_text(block, for_table=True)
         if not isinstance(block, dict):
@@ -661,18 +695,22 @@ class MarkdownRenderer:
         return self._escape_text(str(block), for_table=True)
 
     def _markdown_row(self, cells: List[str]) -> str:
+        """拼一行 Markdown 表格：`| a | b | c |`。"""
         return "| " + " | ".join(cells) + " |"
 
     def _markdown_separator(self, count: int) -> str:
+        """拼表头分隔行：`| --- | --- |`。"""
         return "| " + " | ".join(["---"] * max(1, count)) + " |"
 
     def _render_inlines(self, inlines: List[Any], for_table: bool = False) -> str:
+        """渲染内联序列（拼接各 inlineRun）。"""
         parts: List[str] = []
         for run in inlines or []:
             parts.append(self._render_inline_run(run, for_table=for_table))
         return "".join(parts)
 
     def _render_inline_run(self, run: Any, for_table: bool = False) -> str:
+        """渲染单个内联：套用 marks（bold/italic/link/code/math/...），非通用标记(color/font)降级为纯文本。"""
         if isinstance(run, dict):
             # 处理 inlineRun 类型：嵌套的 inlines 数组
             if run.get("type") == "inlineRun":
@@ -826,6 +864,7 @@ class MarkdownRenderer:
         return all(ch in chinese_numerals or ch == "." for ch in token)
 
     def _quote_lines(self, text: str) -> str:
+        """给多行文本逐行加 `>` 引用前缀。"""
         if not text:
             return ""
         lines = []
@@ -836,6 +875,7 @@ class MarkdownRenderer:
         return "\n".join(lines)
 
     def _normalize_swot_items(self, raw: Any) -> List[Dict[str, Any]]:
+        """把 SWOT 条目（字符串或字典）归一成统一 dict（title/detail/impact/...）。"""
         items: List[Dict[str, Any]] = []
         if not raw:
             return items
@@ -858,6 +898,7 @@ class MarkdownRenderer:
         return items
 
     def _normalize_pest_items(self, raw: Any) -> List[Dict[str, Any]]:
+        """把 PEST 条目（字符串或字典）归一成统一 dict（title/detail/impact/weight/...）。"""
         items: List[Dict[str, Any]] = []
         if not raw:
             return items
@@ -877,6 +918,7 @@ class MarkdownRenderer:
         return items
 
     def _coerce_chart_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """从可能多层嵌套的结构里挖出含 labels/datasets 的图表数据。"""
         if not isinstance(data, dict):
             return {}
         if "labels" in data or "datasets" in data:
@@ -888,6 +930,7 @@ class MarkdownRenderer:
         return data
 
     def _collect_wordcloud_items(self, block: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """从 props/data 的多种可能形态里收集词云条目并按 词+类别 去重。"""
         props = block.get("props") or {}
         candidates: List[Any] = []
         for key in ("data", "words", "items"):
@@ -932,6 +975,7 @@ class MarkdownRenderer:
         return items
 
     def _escape_text(self, text: Any, for_table: bool = False) -> str:
+        """统一转字符串并 strip；表格场景额外转义 `|` 和换行，防止破坏表格结构。"""
         if text is None:
             return ""
         value = str(text)
@@ -940,6 +984,7 @@ class MarkdownRenderer:
         return value.strip()
 
     def _stringify_value(self, value: Any) -> str:
+        """把图表数据点（数字/字典{y,value}/列表）安全转成可读字符串。"""
         if value is None:
             return ""
         if isinstance(value, (int, float)) and not isinstance(value, bool):
@@ -958,6 +1003,7 @@ class MarkdownRenderer:
         return str(value)
 
     def _normalize_math(self, raw: Any) -> str:
+        """剥掉 LaTeX 外层定界符（$$ / \\[ \\] / \\( \\)），返回纯公式体。"""
         if not isinstance(raw, str):
             return ""
         text = raw.strip()
@@ -972,6 +1018,7 @@ class MarkdownRenderer:
         return text
 
     def _format_delta(self, delta: Any, tone: Any) -> str:
+        """KPI 变化值加趋势箭头：up→▲、down→▼。"""
         if delta is None:
             return ""
         prefix = ""

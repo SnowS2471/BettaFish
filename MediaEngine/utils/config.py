@@ -15,8 +15,11 @@ ENV_FILE: str = str(CWD_ENV if CWD_ENV.exists() else (PROJECT_ROOT / ".env"))
 
 class Settings(BaseSettings):
     """
-    全局配置；支持 .env 和环境变量自动加载。
-    变量名与原 config.py 大写一致，便于平滑过渡。
+    MediaEngine 全局配置（一份「大而全」的 Settings，几乎复刻项目根 config.py）。
+
+    包含数据库、各引擎 LLM、Forum/KeywordOptimizer、Tavily/Bocha/Anspire 等所有键，以便本引擎
+    独立运行。SEARCH_TOOL_TYPE 默认 "AnspireAPI"，决定 create_agent 选哪个后端。
+    （注：BOCHA_WEB_SEARCH_API_KEY 在本文件里声明了两次，后者生效，属冗余但无害。）
     """
     # ====================== 数据库配置 ======================
     DB_HOST: str = Field("your_db_host", description="数据库主机，例如localhost 或 127.0.0.1。我们也提供云数据库资源便捷配置，日均10w+数据，可免费申请，联系我们：670939375@qq.com NOTE：为进行数据合规性审查与服务升级，云数据库自2025年10月1日起暂停接收新的使用申请")
@@ -85,4 +88,5 @@ class Settings(BaseSettings):
         extra = "allow"
 
 
+# 模块级单例：导入时即从 .env / 环境变量加载一次
 settings = Settings()

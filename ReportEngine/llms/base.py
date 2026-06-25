@@ -123,6 +123,9 @@ class LLMClient:
 
         timeout = kwargs.pop("timeout", self.timeout)
 
+        req_url = f"{self.base_url.rstrip('/')}/chat/completions" if self.base_url else "https://api.openai.com/v1/chat/completions"
+        logger.debug(f"流式请求 URL: {req_url} | model={self.model_name} | timeout={timeout}")
+
         try:
             stream = self.client.chat.completions.create(
                 model=self.model_name,
@@ -130,14 +133,14 @@ class LLMClient:
                 timeout=timeout,
                 **extra_params,
             )
-            
+
             for chunk in stream:
                 if chunk.choices and len(chunk.choices) > 0:
                     delta = chunk.choices[0].delta
                     if delta and delta.content:
                         yield delta.content
         except Exception as e:
-            logger.error(f"流式请求失败: {str(e)}")
+            logger.error(f"流式请求失败 | URL={req_url} | model={self.model_name} | 错误: {str(e)}")
             raise e
     
     @with_retry(LLM_RETRY_CONFIG)

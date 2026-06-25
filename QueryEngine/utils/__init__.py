@@ -1,6 +1,7 @@
 """
-工具函数模块
-提供文本处理、JSON解析等辅助功能
+工具函数模块（utils 出口）
+
+导出文本清洗 / JSON 解析辅助函数（来自 text_processing）与配置 Settings（来自 config）。
 """
 
 from .text_processing import (

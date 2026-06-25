@@ -336,6 +336,9 @@ class ChapterGenerationNode(BaseNode):
             },
             "forumLogs": context.get("forum_logs", ""),
             "dataBundles": context.get("data_bundles", []),
+            "dataBundleContext": self._inject_data_bundle_to_prompt(
+                section, context.get("data_bundles", [])
+            ),
             "constraints": {
                 "language": "zh-CN",
                 "maxTokens": context.get("max_tokens", 4096),
@@ -365,6 +368,103 @@ class ChapterGenerationNode(BaseNode):
                 constraints["sectionBudgets"] = chapter_plan["sections"]
                 payload["globalContext"]["sectionBudgets"] = chapter_plan["sections"]
         return payload
+
+    @staticmethod
+    def _inject_data_bundle_to_prompt(
+        section: TemplateSection,
+        data_bundles: list,
+    ) -> str:
+        """
+        将 SAReportDataProvider 构建的 dataBundles 转换为章节可用的文本上下文。
+
+        根据章节编号匹配对应的数据包，为 LLM 提供可直接引用的统计数字和案例。
+
+        Args:
+            section: 当前章节对象
+            data_bundles: SAReportDataProvider.build_all_data_bundles() 的输出
+
+        Returns:
+            嵌入到 prompt 中的结构化上下文文本
+        """
+        if not data_bundles:
+            return ""
+
+        bundles_map = {}
+        for bundle in data_bundles:
+            if isinstance(bundle, dict) and 'chapter_id' in bundle:
+                bundles_map[bundle['chapter_id']] = bundle
+
+        chapter_number = section.number
+        if isinstance(chapter_number, str):
+            try:
+                ch_num = int(chapter_number.split('.')[0])
+            except (ValueError, IndexError):
+                ch_num = 0
+        else:
+            ch_num = int(chapter_number) if chapter_number else 0
+
+        # 章节 -> dataBundle 映射
+        chapter_bundle_map = {
+            3: 'news_overview',
+            4: 'cross_platform',      # 舆情焦点：使用跨平台关键词和议题数据
+            5: 'x_propagation',
+            6: 'cross_platform',
+            7: 'cross_platform',
+            8: 'propagation_trends',
+        }
+
+        bundle_key = chapter_bundle_map.get(ch_num)
+        if not bundle_key:
+            # 尝试按 chapter_id 直接匹配
+            for bundle in data_bundles:
+                if isinstance(bundle, dict) and bundle.get('chapter_id') == section.chapter_id:
+                    bundle_key = section.chapter_id
+                    break
+
+        if not bundle_key:
+            return ""
+
+        matched_bundle = next(
+            (b for b in data_bundles if isinstance(b, dict) and b.get('key') == bundle_key),
+            None,
+        )
+        if not matched_bundle and bundles_map:
+            matched_bundle = bundles_map.get(bundle_key)
+
+        if not matched_bundle:
+            return ""
+
+        # 将 data bundle 转换为可读文本
+        import json as _json
+        bundle_text = _json.dumps(matched_bundle, ensure_ascii=False, indent=2)
+
+        chapter_hints = {
+            'cross_platform': (
+                '请使用对比表格展示新闻端和社交端的关键词差异，'
+                '并用柱状图（Chart.js bar）展示情感分布对比。'
+                '若本章为舆情焦点章节，请从关键词对比中提炼核心议题，'
+                '用KPI卡片展示议题热度排行，并引用代表性观点。'
+            ),
+            'x_propagation': (
+                '请使用饼图展示推文类型分布，折线图展示时间趋势，'
+                '并列出热度最高的5条推文。'
+            ),
+            'news_overview': (
+                '请使用表格展示各新闻源的数量分布，'
+                '并注明数据采集时间范围。'
+            ),
+            'propagation_trends': (
+                '请使用双线折线图展示新闻和推文的每日发布趋势对比，'
+                '并列出热度前10的推文排行。'
+            ),
+        }
+
+        hint = chapter_hints.get(bundle_key, '请直接引用以上数据，优先使用表格和图表展示。')
+        return (
+            f"**本章专属数据包 ({bundle_key})**：\n"
+            f"```json\n{bundle_text}\n```\n\n"
+            f"**数据引用指引**：{hint}"
+        )
 
     def _get_chapter_swot_permission(self, chapter_id: str, context: Dict[str, Any]) -> bool:
         """

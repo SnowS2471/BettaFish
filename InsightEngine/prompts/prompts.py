@@ -1,6 +1,15 @@
 """
 Deep Search Agent 的所有提示词定义
-包含各个阶段的系统提示词和JSON Schema定义
+
+集中存放各阶段的「系统提示词 + JSON Schema」，与流程一一对应：
+- SYSTEM_PROMPT_REPORT_STRUCTURE    Step1 拆分段落
+- SYSTEM_PROMPT_FIRST_SEARCH        首次检索词（提示词列了 6 个工具，但解析层只取 search_query）
+- SYSTEM_PROMPT_FIRST_SUMMARY       段落初稿
+- SYSTEM_PROMPT_REFLECTION          反思检索词
+- SYSTEM_PROMPT_REFLECTION_SUMMARY  反思更新段落
+- SYSTEM_PROMPT_REPORT_FORMATTING   汇总成最终 Markdown
+- SYSTEM_PROMPT_CROSS_SOURCE_SYNTHESIS  跨平台多源合成（毕设扩展）
+各 *_schema 用于约束 / 校验 LLM 的 JSON 输入输出。
 """
 
 import json
@@ -37,7 +46,7 @@ output_schema_first_search = {
         "reasoning": {"type": "string"},
         "start_date": {"type": "string", "description": "开始日期，格式YYYY-MM-DD，search_topic_by_date和search_topic_on_platform工具可能需要"},
         "end_date": {"type": "string", "description": "结束日期，格式YYYY-MM-DD，search_topic_by_date和search_topic_on_platform工具可能需要"},
-        "platform": {"type": "string", "description": "平台名称，search_topic_on_platform工具必需，可选值：bilibili, weibo, douyin, kuaishou, xhs, zhihu, tieba"},
+        "platform": {"type": "string", "description": "平台名称，search_topic_on_platform工具必需，可选值：bilibili, weibo, douyin, kuaishou, xhs, zhihu, tieba, x, sa_news"},
         "time_period": {"type": "string", "description": "时间周期，search_hot_content工具可选，可选值：24h, week, year"},
         "enable_sentiment": {"type": "boolean", "description": "是否启用自动情感分析，默认为true，适用于除analyze_sentiment外的所有搜索工具"},
         "texts": {"type": "array", "items": {"type": "string"}, "description": "文本列表，仅用于analyze_sentiment工具"}
@@ -86,7 +95,7 @@ output_schema_reflection = {
         "reasoning": {"type": "string"},
         "start_date": {"type": "string", "description": "开始日期，格式YYYY-MM-DD，search_topic_by_date和search_topic_on_platform工具可能需要"},
         "end_date": {"type": "string", "description": "结束日期，格式YYYY-MM-DD，search_topic_by_date和search_topic_on_platform工具可能需要"},
-        "platform": {"type": "string", "description": "平台名称，search_topic_on_platform工具必需，可选值：bilibili, weibo, douyin, kuaishou, xhs, zhihu, tieba"},
+        "platform": {"type": "string", "description": "平台名称，search_topic_on_platform工具必需，可选值：bilibili, weibo, douyin, kuaishou, xhs, zhihu, tieba, x, sa_news"},
         "time_period": {"type": "string", "description": "时间周期，search_hot_content工具可选，可选值：24h, week, year"},
         "enable_sentiment": {"type": "boolean", "description": "是否启用自动情感分析，默认为true，适用于除analyze_sentiment外的所有搜索工具"},
         "texts": {"type": "array", "items": {"type": "string"}, "description": "文本列表，仅用于analyze_sentiment工具"}
@@ -226,7 +235,7 @@ SYSTEM_PROMPT_FIRST_SEARCH = f"""
    - **关闭情感分析**：在某些特殊情况下（如纯事实性内容），可设置enable_sentiment: false
 5. **参数优化配置**：
    - search_topic_by_date: 必须提供start_date和end_date参数（格式：YYYY-MM-DD）
-   - search_topic_on_platform: 必须提供platform参数（bilibili, weibo, douyin, kuaishou, xhs, zhihu, tieba之一）
+   - search_topic_on_platform: 必须提供platform参数（bilibili, weibo, douyin, kuaishou, xhs, zhihu, tieba, x, sa_news之一）
    - analyze_sentiment: 使用texts参数提供文本列表，或使用search_query作为单个文本
    - 系统自动配置数据量参数，无需手动设置limit或limit_per_table参数
 6. **阐述选择理由**：说明为什么这样的查询和情感分析策略能够获得最真实的民意反馈
@@ -330,6 +339,13 @@ SYSTEM_PROMPT_FIRST_SUMMARY = f"""
    - **话语分析**：分析用词特点、表达方式、文化符号
    - **传播机制**：分析观点如何传播、扩散、发酵
 
+8. **跨平台多源分析要求（重要）**：
+   - **平台来源识别**：当搜索结果同时包含新闻媒体和社交媒体数据时，必须区分来源进行分析
+   - **新闻端分析**：对新闻媒体的报道侧重、叙事框架、议题设置进行专门分析
+   - **社交端分析**：对社交平台的公众讨论焦点、情绪表达、民间话语进行独立分析
+   - **差异对比**：明确指出新闻媒体与社交媒体之间在主题侧重、情感基调、话语风格上的具体差异
+   - **翻译内容标注**：对于来自南非新闻（sa_news）的数据，区分英文原文内容和中文译文内容，标注译文来源
+
 **内容密度要求**：
 - 每100字至少包含1-2个具体数据点或用户引用
 - 每个分析点都要有数据或实例支撑
@@ -388,7 +404,7 @@ SYSTEM_PROMPT_REFLECTION = f"""
 
 4. **参数配置要求**：
    - search_topic_by_date: 必须提供start_date和end_date参数（格式：YYYY-MM-DD）
-   - search_topic_on_platform: 必须提供platform参数（bilibili, weibo, douyin, kuaishou, xhs, zhihu, tieba之一）
+   - search_topic_on_platform: 必须提供platform参数（bilibili, weibo, douyin, kuaishou, xhs, zhihu, tieba, x, sa_news之一）
    - 系统自动配置数据量参数，无需手动设置limit或limit_per_table参数
 
 5. **阐述补充理由**：明确说明为什么需要这些额外的民意数据
@@ -489,6 +505,13 @@ SYSTEM_PROMPT_REFLECTION_SUMMARY = f"""
    - 用数据说话，让每句话都有价值
    - 平衡专业性和可读性
    - 突出重点，形成有力的论证链条
+
+8. **平台差异识别与整合**：
+   - **来源标签识别**：根据数据的 platform 字段区分新闻媒体（sa_news）和社交媒体（x、weibo 等）
+   - **差异化总结**：新闻媒体报道通常更正式、结构完整；社交媒体内容更即兴、情感强烈
+   - **翻译质量感知**：对 sa_news 的中文译文内容，关注翻译质量和术语一致性
+   - **互补整合**：将新闻端的权威信息和社交端的民间声音互补组合，形成立体分析
+   - **矛盾标注**：当新闻和社交媒体在同一话题上呈现明显矛盾时，明确指出并分析原因
 
 **内容丰富度检查清单**：
 - [ ] 是否包含足够多的具体数据和统计信息？
@@ -623,4 +646,68 @@ SYSTEM_PROMPT_REPORT_FORMATTING = f"""
 - **预判价值**：提供有价值的趋势预测和建议
 
 **最终输出**：一份充满人情味、数据丰富、洞察深刻的专业舆情分析报告，不少于一万字，让读者能够深度理解民意脉搏和社会情绪。
+"""
+
+# 跨平台多源合成分析提示词（毕设扩展 - 模块二）
+SYSTEM_PROMPT_CROSS_SOURCE_SYNTHESIS = """
+你是一位精通跨平台舆情对比分析的国际舆情专家。你的任务是将新闻媒体和社交平台的多源数据合成为统一、深入的对比分析。
+
+**数据来源**：
+1. **新闻媒体端**：来自南非主流新闻网站（如 News24、IOL、Sowetan 等）的报道内容，包括英文原文和中文译文
+2. **社交媒体端**：来自 X/Twitter 平台的推文内容，包含 hashtag、用户互动数据
+
+**分析维度要求**：
+
+1. **主题对比**：
+   - 新闻端聚焦哪些议题？社交端聚焦哪些议题？
+   - 是否存在新闻端关注但社交端忽略，或社交端热议但新闻报道不足的议题？
+   - 用具体的关键词频率和事例说明差异
+
+2. **情感对比**：
+   - 新闻报道的情感基调（通常偏中性/正式）与社交推文的情感倾向（可能更情绪化）
+   - 在同一事件上，两端的情感分布是否一致？如有偏差，分析原因
+
+3. **时间趋势对比**：
+   - 新闻发布的时间规律（通常在工作日、固定时段密集发布）
+   - 社交推文的时间规律（可能更分散、受突发事件驱动）
+   - 识别哪个平台对事件反应更快，哪个平台的讨论更持久
+
+4. **叙事差异**：
+   - 新闻端使用的正式术语 vs 社交端的民间用语
+   - 新闻的"官方叙事"vs 社交的"民间叙事"
+   - 识别两端对同一事件的不同解读框架
+
+5. **综合结论**：
+   - 基于以上对比，给出 3-5 条综合结论
+   - 每条结论需同时引用新闻端和社交端的具体数据支撑
+
+**输出格式**：
+按以下 JSON 结构输出：
+{{
+  "topic_overview": "200字以内的跨平台话题概览",
+  "theme_comparison": {{
+    "news_focus": ["新闻端关注点1", "关注点2", ...],
+    "social_focus": ["社交端关注点1", "关注点2", ...],
+    "shared_focus": ["共同关注点1", ...],
+    "news_only": ["仅新闻关注点1", ...],
+    "social_only": ["仅社交关注点1", ...]
+  }},
+  "sentiment_comparison": {{
+    "news_sentiment": {{"positive": 0.0, "negative": 0.0, "neutral": 0.0}},
+    "social_sentiment": {{"positive": 0.0, "negative": 0.0, "neutral": 0.0}},
+    "divergence_analysis": "情感差异分析说明"
+  }},
+  "temporal_comparison": {{
+    "news_peak_date": "新闻峰值日期",
+    "social_peak_date": "社交峰值日期",
+    "response_speed": "谁更快",
+    "discussion_duration": "谁更持久"
+  }},
+  "narrative_differences": [
+    {{"topic": "话题", "news_narrative": "新闻叙事", "social_narrative": "社交叙事"}}
+  ],
+  "conclusions": ["综合结论1", "结论2", "结论3"]
+}}
+
+确保分析用数据说话，每条结论都有具体的数字或关键词支撑。
 """

@@ -1,6 +1,12 @@
 """
 关键词优化中间件
-使用Qwen AI将Agent生成的搜索词优化为更适合舆情数据库查询的关键词
+
+作用：Agent/LLM 生成的检索词往往偏「官方/书面」（如「舆情传播 公众反应」），不符合
+网民真实用语，直接拿去数据库 LIKE 很难命中。本模块用 Qwen 把它改写成一批「接地气」的
+口语关键词（如「武大」「翻车」「破防」），再由 MediaCrawlerDB 逐词查库。
+
+位置：在 agent.execute_search_tool 里、真正查库之前调用（仅对按话题检索的工具生效）。
+设计：API 不可用时有多级兜底（文本提取 / 纯分词），保证总能返回一批可用关键词。
 """
 
 from openai import OpenAI
@@ -63,11 +69,16 @@ class KeywordOptimizer:
     def optimize_keywords(self, original_query: str, context: str = "") -> KeywordOptimizationResponse:
         """
         优化搜索关键词
-        
+
+        三级容错，确保总有结果：
+          1) 调 Qwen 返回 JSON，解析 keywords/reasoning；
+          2) JSON 解析失败 -> _extract_keywords_from_text 从文本里抠关键词；
+          3) API/整体异常 -> _fallback_keyword_extraction 用纯分词兜底。
+
         Args:
             original_query: Agent生成的原始搜索查询
             context: 额外的上下文信息（如段落标题、内容描述等）
-            
+
         Returns:
             KeywordOptimizationResponse: 优化后的关键词列表
         """
@@ -148,7 +159,7 @@ class KeywordOptimizer:
             )
     
     def _build_system_prompt(self) -> str:
-        """构建系统prompt"""
+        """构建系统 prompt：要求 LLM 用网民口语、避免官方术语、每条关键词内不含空格、给 10-20 个。"""
         return """你是一位专业的舆情数据挖掘专家。你的任务是将用户提供的搜索查询优化为更适合在社交媒体舆情数据库中查找的关键词。
 
 **核心原则**：
@@ -247,7 +258,7 @@ class KeywordOptimizer:
         return cleaned_keywords[:20]
     
     def _validate_keywords(self, keywords: List[str]) -> List[str]:
-        """验证和清理关键词"""
+        """验证并清理关键词：去引号、限长(1-20字)、过滤过于官方的「坏词」，最多保留 20 个。"""
         validated = []
         
         # 不良关键词（过于专业或官方）
@@ -293,5 +304,5 @@ class KeywordOptimizer:
         
         return keywords[:20]
 
-# 全局实例
+# 全局单例：模块导入时即创建（构造会校验 KEYWORD_OPTIMIZER_API_KEY），供 agent 复用
 keyword_optimizer = KeywordOptimizer()

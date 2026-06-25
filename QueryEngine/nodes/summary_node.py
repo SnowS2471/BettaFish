@@ -1,6 +1,9 @@
 """
 总结节点实现
-负责根据搜索结果生成和更新段落内容
+
+把搜索结果转写成段落正文：FirstSummaryNode（初稿）与 ReflectionSummaryNode（增补/修订）。
+两者生成前都会读取 ForumEngine 写在 forum.log 的 [HOST] 主持人发言并前置进 prompt——这是
+各 Agent 通过论坛协同、避免同质化的注入点。（注：QueryEngine 不做 InsightEngine 的平台元信息分组。）
 """
 
 import json
@@ -19,7 +22,8 @@ from ..utils.text_processing import (
     format_search_results_for_prompt
 )
 
-# 导入论坛读取工具
+# 导入论坛读取工具：读取 ForumEngine 写在 logs/forum.log 的 [HOST] 主持人发言；
+# 该模块在项目根 utils/ 下，故把根目录加入 sys.path；导入失败则降级（跳过 HOST 读取）。
 import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -32,7 +36,7 @@ except ImportError:
 
 
 class FirstSummaryNode(StateMutationNode):
-    """根据搜索结果生成段落首次总结的节点"""
+    """根据搜索结果生成段落首次总结的节点：先读 [HOST] 发言再调 LLM，结果写回 latest_summary。"""
     
     def __init__(self, llm_client):
         """
@@ -200,7 +204,7 @@ class FirstSummaryNode(StateMutationNode):
 
 
 class ReflectionSummaryNode(StateMutationNode):
-    """根据反思搜索结果更新段落总结的节点"""
+    """根据反思搜索结果「更新」段落总结：在原文基础上增补/修订，写回 latest_summary 并 increment_reflection。"""
     
     def __init__(self, llm_client):
         """

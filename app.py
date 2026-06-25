@@ -1,5 +1,26 @@
 """
-Flask主应用 - 统一管理三个Streamlit应用
+Flask 主应用 —— 整个 BettaFish 系统的总控/编排进程
+
+职责概述
+--------
+本文件本身不跑任何 AI 分析，而是一个 Flask + Socket.IO 的「控制台 + 编排器」：
+- 用 subprocess 拉起三个独立的 Streamlit 引擎应用（Insight/Media/Query，端口 8501/8502/8503）；
+- 用后台线程跑 ForumEngine 监控与 forum.log → 前端的推送；
+- 用 Blueprint 挂载 ReportEngine 的 HTTP/SSE 接口；
+- 通过 HTTP 反向代理把用户搜索扇出给三个引擎，并用 WebSocket 把各方日志实时推给浏览器。
+
+启动次序（重要）
+----------------
+1. `python app.py` 只起 Web 服务器，**不自动启动引擎**；
+2. 前端点「启动系统」→ POST /api/system/start → initialize_system_components() 才真正拉起各组件；
+3. 前端「搜索」→ POST /api/search → 本进程把 query 转发给三个 Streamlit 应用的 /api/search。
+
+进程/线程模型
+-------------
+- 三个 Streamlit = 三个子进程，stdout 由独立线程写入 logs/{app}.log 并 WebSocket 推送；
+- 两套日志监听各司其职：本文件的 monitor_forum_log 只负责「forum.log → 浏览器」；
+  ForumEngine 自己的监控线程负责「引擎日志 → forum.log + LLM 主持人」（见 ForumEngine/monitor.py）。
+- 文件即消息总线：logs/{insight,media,query}.log 与 logs/forum.log 是各组件解耦的实际通道。
 """
 
 import os
@@ -24,7 +45,7 @@ import importlib
 from pathlib import Path
 from MindSpider.main import MindSpider
 
-# 导入ReportEngine
+# 导入ReportEngine（以 Flask Blueprint 形式挂载；导入失败则降级，系统其余部分仍可用）
 try:
     from ReportEngine.flask_interface import report_bp, initialize_report_engine
     REPORT_ENGINE_AVAILABLE = True
@@ -34,7 +55,7 @@ except ImportError as e:
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'Dedicated-to-creating-a-concise-and-versatile-public-opinion-analysis-platform'
-socketio = SocketIO(app, cors_allowed_origins="*")
+socketio = SocketIO(app, cors_allowed_origins="*")  # WebSocket：向前端实时推送日志/状态/论坛消息
 
 # eventlet 在客户端主动断开时偶尔会抛出 ConnectionAbortedError，这里做一次防御性包裹，
 # 避免无意义的堆栈污染日志（仅在 eventlet 可用时启用）。
@@ -266,7 +287,15 @@ def _mark_shutdown_requested():
 
 
 def initialize_system_components():
-    """启动所有依赖组件（Streamlit 子应用、ForumEngine、ReportEngine）。"""
+    """启动所有依赖组件（Streamlit 子应用、ForumEngine、ReportEngine）。
+
+    由 /api/system/start 调用，是「真正把系统拉起来」的核心编排。次序：
+        1. MindSpider 建库（确保数据表就绪）；
+        2. 先停 ForumEngine，避免它占着 forum.log 与后续清空冲突；
+        3. 逐个 subprocess 启动三个 Streamlit 引擎，并各自做健康检查；
+        4. 启动 ForumEngine 监控线程；5. 初始化 ReportEngine。
+    任一引擎启动失败 → cleanup_processes() 整体回滚，返回 errors。
+    """
     logs = []
     errors = []
     
@@ -430,7 +459,12 @@ def parse_forum_log_line(line):
 forum_log_positions = {}
 
 def monitor_forum_log():
-    """监听forum.log文件变化并推送到前端"""
+    """监听 forum.log 文件变化并推送到前端（WebSocket）。
+
+    注意与 ForumEngine 的区别：本函数只做「forum.log → 浏览器」的展示推送；
+    而 ForumEngine/monitor.py 的监控线程做的是「引擎日志 → forum.log + LLM 主持人」。
+    用文件偏移做增量读取，processed_lines 哈希集合去重并定期裁剪以防内存泄漏。
+    """
     import time
     from pathlib import Path
 
@@ -491,11 +525,11 @@ def monitor_forum_log():
             logger.error(f"Forum日志监听错误: {e}")
             time.sleep(5)
 
-# 启动Forum日志监听线程
+# 启动Forum日志监听线程（daemon：随主进程退出而退出）
 forum_monitor_thread = threading.Thread(target=monitor_forum_log, daemon=True)
 forum_monitor_thread.start()
 
-# 全局变量存储进程信息
+# 全局变量存储进程信息：每个 Streamlit 引擎对应一个子进程 + 端口 + 状态；forum 无独立进程（线程内运行）
 processes = {
     'insight': {'process': None, 'port': 8501, 'status': 'stopped', 'output': [], 'log_file': None, 'healthcheck_started_at': None},
     'media': {'process': None, 'port': 8502, 'status': 'stopped', 'output': [], 'log_file': None, 'healthcheck_started_at': None},
@@ -561,7 +595,11 @@ def read_log_from_file(app_name, tail_lines=None):
         return []
 
 def read_process_output(process, app_name):
-    """读取进程输出并写入文件"""
+    """读取子进程输出并写入文件 + WebSocket 推送（每个 Streamlit 进程配一个此线程）。
+
+    关键作用：把引擎 stdout 落到 logs/{app}.log —— 这正是 ForumEngine 监控线程要读取的对象，
+    也是各引擎间通过文件解耦协同的源头。Windows 与 Unix 分别用 readline / select 做非阻塞读。
+    """
     import select
     import sys
     
@@ -632,7 +670,12 @@ def read_process_output(process, app_name):
             break
 
 def start_streamlit_app(app_name, script_path, port):
-    """启动Streamlit应用"""
+    """启动一个 Streamlit 引擎子应用（subprocess.Popen）。
+
+    以 `streamlit run <脚本> --server.port <port> --server.headless true` 拉起独立进程，
+    设置 UTF-8/无缓冲环境变量保证中文日志实时透传，并起 read_process_output 线程接管其输出。
+    Windows 下用 CREATE_NO_WINDOW 隐藏控制台窗口。
+    """
     try:
         if processes[app_name]['process'] is not None:
             return False, "应用已经在运行"
@@ -657,8 +700,7 @@ def start_streamlit_app(app_name, script_path, port):
             '--server.headless', 'true',
             '--browser.gatherUsageStats', 'false',
             # '--logger.level', 'debug',  # 增加日志详细程度
-            '--logger.level', 'info',
-            '--server.enableCORS', 'false'
+            '--logger.level', 'info'
         ]
         
         # 设置环境变量确保UTF-8编码和减少缓冲
@@ -832,7 +874,11 @@ def cleanup_processes():
     _set_system_state(started=False, starting=False)
 
 def cleanup_processes_concurrent(timeout: float = 6.0):
-    """并发清理所有子进程，超时后强制杀掉残留进程。"""
+    """并发清理所有子进程，超时后强制杀掉残留进程。
+
+    多线程同时 terminate 三个 Streamlit + 停 ForumEngine（比串行快）；join 总超时后做二次
+    terminate→kill 兜底，确保不留僵尸进程。只处理本控制台启动并记录的子进程，不做全局端口扫描。
+    """
     _log_shutdown_step(f"开始并发清理子进程（超时 {timeout}s）")
     _log_shutdown_step("仅终止当前控制台启动并记录的子进程，不做端口扫描")
     running_before = _describe_running_children()
@@ -899,7 +945,10 @@ def _schedule_server_shutdown(delay_seconds: float = 0.1):
     threading.Thread(target=_shutdown, daemon=True).start()
 
 def _start_async_shutdown(cleanup_timeout: float = 3.0):
-    """异步触发清理并强制退出，避免HTTP请求阻塞。"""
+    """异步触发清理并强制退出，避免HTTP请求阻塞。
+
+    用 threading.Timer 设硬超时兜底：即便清理线程卡住，也能在 cleanup_timeout+2s 后 os._exit 强退。
+    """
     _log_shutdown_step(f"收到关机指令，启动异步清理（超时 {cleanup_timeout}s）")
 
     def _force_exit():
@@ -1151,7 +1200,12 @@ def get_forum_log_history():
 
 @app.route('/api/search', methods=['POST'])
 def search():
-    """统一搜索接口"""
+    """统一搜索接口（反向代理/扇出）。
+
+    本进程不做分析，只把 query 用 HTTP 转发给运行中的三个 Streamlit 引擎各自的 /api/search
+    （8501/8502/8503），并发收集各自结果返回。真正的 research() 在各引擎进程内执行；
+    其产生的日志会被 ForumEngine 捕获、汇集到 forum.log。
+    """
     data = request.get_json()
     query = data.get('query', '').strip()
     
@@ -1246,7 +1300,7 @@ def get_system_status():
 
 @app.route('/api/system/start', methods=['POST'])
 def start_system():
-    """在接收到请求后启动完整系统。"""
+    """在接收到请求后启动完整系统（前端「启动系统」按钮的后端入口）。"""
     allowed, message = _prepare_system_start()
     if not allowed:
         return jsonify({'success': False, 'message': message}), 400
@@ -1273,7 +1327,11 @@ def start_system():
 
 @app.route('/api/system/shutdown', methods=['POST'])
 def shutdown_system():
-    """优雅停止所有组件并关闭当前服务进程。"""
+    """优雅停止所有组件并关闭当前服务进程。
+
+    用 _mark_shutdown_requested() 去重（重复点击只返回当前进度），随后异步清理 + 强退，
+    立即返回响应避免 HTTP 请求被关机过程阻塞。
+    """
     state = _get_system_state()
     if state['starting']:
         return jsonify({'success': False, 'message': '系统正在启动/重启，请稍候'}), 400
@@ -1335,13 +1393,15 @@ if __name__ == '__main__':
     from config import settings
     HOST = settings.HOST
     PORT = settings.PORT
-    
+
+    # 注意：此处只启动 Web 服务器；三个引擎/ForumEngine/ReportEngine 要等前端调 /api/system/start 才拉起
     logger.info("等待配置确认，系统将在前端指令后启动组件...")
     logger.info(f"Flask服务器已启动，访问地址: http://{HOST}:{PORT}")
-    
+
     try:
         socketio.run(app, host=HOST, port=PORT, debug=False)
     except KeyboardInterrupt:
+        # Ctrl+C 兜底清理（正常关机走 /api/system/shutdown）
         logger.info("\n正在关闭应用...")
         cleanup_processes()
         
